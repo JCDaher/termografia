@@ -297,6 +297,11 @@ class ROIEditorDialog(QDialog):
         # Layout horizontal para controles e canvas
         h_layout = QHBoxLayout()
 
+        # IMPORTANTE: Criar o canvas PRIMEIRO, antes dos controles que o referenciam
+        self.canvas = ROICanvas()
+        self.canvas.set_image(self.image)
+        self.canvas.roi_completed.connect(self.on_roi_completed)
+
         # Painel de controles
         controls_group = QGroupBox("Controles")
         controls_layout = QVBoxLayout(controls_group)
@@ -332,10 +337,7 @@ class ROIEditorDialog(QDialog):
         controls_group.setMaximumWidth(250)
         h_layout.addWidget(controls_group)
 
-        # Canvas de desenho
-        self.canvas = ROICanvas()
-        self.canvas.set_image(self.image)
-        self.canvas.roi_completed.connect(self.on_roi_completed)
+        # Adiciona o canvas ao layout
         h_layout.addWidget(self.canvas, stretch=1)
 
         layout.addLayout(h_layout)
