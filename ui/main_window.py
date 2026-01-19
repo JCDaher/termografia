@@ -7,10 +7,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QFileDialog, QTextEdit, QTabWidget, QGroupBox,
     QLineEdit, QComboBox, QSpinBox, QMessageBox, QProgressBar,
-    QTableWidget, QTableWidgetItem, QSplitter, QFormLayout, QListWidget
+    QTableWidget, QTableWidgetItem, QSplitter, QFormLayout, QListWidget,
+    QMenu, QMenuBar
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QAction
 import cv2
 import numpy as np
 from pathlib import Path
@@ -22,6 +23,11 @@ from core.flir_processor import FLIRProcessor
 from core.thermal_analyzer import ThermalAnalyzer
 from database.db_manager import get_db_manager
 from api.claude_client import get_claude_client, has_api_key, configure_api_key
+from reports.pdf_generator import PDFGenerator
+from ui.roi_editor import ROIEditorDialog
+from ui.patient_history import PatientHistoryDialog
+from ui.report_editor import ReportEditorDialog
+from ui.themes import get_theme_manager, ThemeManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +62,8 @@ class MainWindow(QMainWindow):
         self.flir_processor = FLIRProcessor()
         self.thermal_analyzer = ThermalAnalyzer()
         self.db_manager = get_db_manager()
+        self.pdf_generator = PDFGenerator()
+        self.theme_manager = get_theme_manager()
 
         # Estado da aplicação
         self.current_image_data = None
@@ -63,13 +71,17 @@ class MainWindow(QMainWindow):
         self.current_patient_id = None
         self.loaded_images = []  # Lista de todas as imagens carregadas
         self.current_image_index = 0  # Índice da imagem atual
+        self.current_rois = []  # ROIs desenhadas
+        self.generated_report_text = ""  # Último laudo gerado
 
         self.init_ui()
+        self.setup_menu()
+        self.setup_shortcuts()
         self.check_api_key()
 
     def init_ui(self):
         """Inicializa a interface do usuário."""
-        self.setWindowTitle("Termografia Médica - FASE 1 MVP")
+        self.setWindowTitle("Termografia Médica - FASE 2 Completo")
         self.setGeometry(100, 100, 1400, 900)
 
         # Widget central
@@ -679,10 +691,27 @@ Significado Clínico:
     def on_report_generated(self, report: str):
         """Callback quando laudo é gerado."""
         self.progress_bar.setVisible(False)
-        self.text_report.setText(report)
-        self.tabs.setCurrentIndex(2)  # Vai para aba de laudo
-        self.statusBar().showMessage("Laudo gerado com sucesso")
-        QMessageBox.information(self, "Sucesso", "Laudo gerado com sucesso!")
+        self.generated_report_text = report
+
+        # Abre editor de laudos para revisão
+        patient_data = {
+            'name': self.input_patient_name.text(),
+            'birth_date': ''
+        }
+        exam_data = {
+            'exam_date': datetime.now().strftime('%d/%m/%Y'),
+            'exam_type': self.combo_exam_type.currentText()
+        }
+
+        editor = ReportEditorDialog(report, patient_data, exam_data, self)
+        editor.report_finalized.connect(self.on_report_finalized)
+
+        if editor.exec():
+            self.statusBar().showMessage("Laudo revisado e finalizado")
+        else:
+            # Se cancelou, ainda mostra o laudo original
+            self.text_report.setText(report)
+            self.tabs.setCurrentIndex(2)
 
     def on_report_error(self, error_msg: str):
         """Callback quando há erro na geração."""
@@ -716,12 +745,270 @@ Significado Clínico:
 
     def export_pdf(self):
         """Exporta laudo para PDF."""
-        # TODO: Implementar exportação PDF na FASE 2
-        QMessageBox.information(
+        report_text = self.text_report.toPlainText()
+
+        if not report_text:
+            QMessageBox.warning(self, "Aviso", "Nenhum laudo para exportar")
+            return
+
+        # Dialog para escolher onde salvar
+        filename, _ = QFileDialog.getSaveFileName(
             self,
-            "Em Desenvolvimento",
-            "Exportação para PDF será implementada na FASE 2"
+            "Salvar PDF",
+            f"Laudo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            "PDF Files (*.pdf)"
         )
+
+        if not filename:
+            return
+
+        try:
+            # Prepara dados do laudo
+            patient = self.db_manager.get_patient(self.current_patient_id) if self.current_patient_id else {}
+            exam = self.db_manager.get_exam(self.current_exam_id) if self.current_exam_id else {}
+
+            report_data = {
+                'patient': patient,
+                'exam': exam,
+                'report_text': report_text
+            }
+
+            # Dados do médico (opcional - pode vir de configuração)
+            physician_data = {
+                'name': 'Dr. Jorge Cecílio Daher Jr.',
+                'crm': 'CRM-GO 6108',
+                'specialty': 'Endocrinologia e Metabologia'
+            }
+
+            # Gera PDF
+            success = self.pdf_generator.generate_report(
+                filename,
+                report_data,
+                physician_data
+            )
+
+            if success:
+                QMessageBox.information(self, "Sucesso", f"PDF exportado com sucesso!\n{filename}")
+                self.statusBar().showMessage(f"PDF salvo: {filename}")
+            else:
+                QMessageBox.critical(self, "Erro", "Erro ao gerar PDF")
+
+        except Exception as e:
+            logger.error(f"Erro ao exportar PDF: {e}")
+            QMessageBox.critical(self, "Erro", f"Erro ao exportar PDF:\n{e}")
+
+    def on_report_finalized(self, report_data: Dict[str, Any]):
+        """
+        Callback quando laudo é finalizado no editor.
+
+        Args:
+            report_data: Dicionário com dados do laudo editado
+        """
+        # Atualiza texto do laudo
+        self.text_report.setText(report_data['report_text'])
+
+        # Salva automaticamente se houver exame ativo
+        if self.current_exam_id:
+            try:
+                self.db_manager.create_report(
+                    exam_id=self.current_exam_id,
+                    report_text=report_data['report_text'],
+                    report_type=report_data['report_type'],
+                    physician_name=report_data.get('physician_name'),
+                    physician_crm=report_data.get('physician_crm'),
+                    conclusion=report_data.get('conclusion'),
+                    recommendations=report_data.get('recommendations')
+                )
+                self.statusBar().showMessage("Laudo salvo automaticamente")
+            except Exception as e:
+                logger.error(f"Erro ao salvar laudo: {e}")
+
+        # Vai para aba de laudo
+        self.tabs.setCurrentIndex(2)
+
+    def setup_menu(self):
+        """Configura o menu principal."""
+        menubar = self.menuBar()
+
+        # Menu Arquivo
+        file_menu = menubar.addMenu("Arquivo")
+
+        action_new_exam = QAction("Novo Exame", self)
+        action_new_exam.setShortcut("Ctrl+N")
+        action_new_exam.triggered.connect(lambda: self.tabs.setCurrentIndex(0))
+        file_menu.addAction(action_new_exam)
+
+        action_history = QAction("Histórico de Pacientes", self)
+        action_history.setShortcut("Ctrl+H")
+        action_history.triggered.connect(self.open_patient_history)
+        file_menu.addAction(action_history)
+
+        file_menu.addSeparator()
+
+        action_exit = QAction("Sair", self)
+        action_exit.setShortcut("Ctrl+Q")
+        action_exit.triggered.connect(self.close)
+        file_menu.addAction(action_exit)
+
+        # Menu Ferramentas
+        tools_menu = menubar.addMenu("Ferramentas")
+
+        action_roi_editor = QAction("Editor de ROIs", self)
+        action_roi_editor.setShortcut("Ctrl+R")
+        action_roi_editor.triggered.connect(self.open_roi_editor)
+        tools_menu.addAction(action_roi_editor)
+
+        action_import = QAction("Importar Imagens", self)
+        action_import.setShortcut("Ctrl+I")
+        action_import.triggered.connect(self.import_flir_image)
+        tools_menu.addAction(action_import)
+
+        # Menu Temas
+        theme_menu = menubar.addMenu("Temas")
+
+        action_light = QAction("Tema Claro", self)
+        action_light.triggered.connect(lambda: self.theme_manager.apply_theme(ThemeManager.LIGHT))
+        theme_menu.addAction(action_light)
+
+        action_dark = QAction("Tema Escuro", self)
+        action_dark.triggered.connect(lambda: self.theme_manager.apply_theme(ThemeManager.DARK))
+        theme_menu.addAction(action_dark)
+
+        action_blue = QAction("Tema Azul Médico", self)
+        action_blue.triggered.connect(lambda: self.theme_manager.apply_theme(ThemeManager.BLUE))
+        theme_menu.addAction(action_blue)
+
+        theme_menu.addSeparator()
+
+        action_toggle = QAction("Alternar Claro/Escuro", self)
+        action_toggle.setShortcut("Ctrl+T")
+        action_toggle.triggered.connect(self.theme_manager.toggle_theme)
+        theme_menu.addAction(action_toggle)
+
+        # Menu Ajuda
+        help_menu = menubar.addMenu("Ajuda")
+
+        action_about = QAction("Sobre", self)
+        action_about.triggered.connect(self.show_about)
+        help_menu.addAction(action_about)
+
+    def setup_shortcuts(self):
+        """Configura atalhos de teclado adicionais."""
+        # Já configurados no menu, mas podemos adicionar mais se necessário
+        pass
+
+    def open_patient_history(self):
+        """Abre dialog de histórico de pacientes."""
+        dialog = PatientHistoryDialog(self)
+        dialog.patient_selected.connect(self.load_patient_from_history)
+        dialog.exam_selected.connect(self.load_exam_from_history)
+        dialog.exec()
+
+    def load_patient_from_history(self, patient_id: int):
+        """
+        Carrega paciente do histórico.
+
+        Args:
+            patient_id: ID do paciente
+        """
+        try:
+            patient = self.db_manager.get_patient(patient_id)
+
+            if patient:
+                self.current_patient_id = patient_id
+                self.input_patient_name.setText(patient['name'])
+                self.input_medical_record.setText(patient.get('medical_record', ''))
+
+                # Vai para aba de novo exame
+                self.tabs.setCurrentIndex(0)
+
+                self.statusBar().showMessage(f"Paciente carregado: {patient['name']}")
+
+        except Exception as e:
+            logger.error(f"Erro ao carregar paciente: {e}")
+            QMessageBox.critical(self, "Erro", f"Erro ao carregar paciente: {e}")
+
+    def load_exam_from_history(self, exam_id: int):
+        """
+        Carrega exame do histórico.
+
+        Args:
+            exam_id: ID do exame
+        """
+        try:
+            exam = self.db_manager.get_exam(exam_id)
+
+            if exam:
+                self.current_exam_id = exam_id
+
+                # Carrega dados do paciente
+                patient = self.db_manager.get_patient(exam['patient_id'])
+                if patient:
+                    self.current_patient_id = patient['id']
+                    self.input_patient_name.setText(patient['name'])
+
+                # Carrega imagens do exame
+                images = self.db_manager.get_exam_images(exam_id)
+                if images:
+                    # TODO: Carregar imagens
+                    pass
+
+                self.statusBar().showMessage(f"Exame #{exam_id} carregado")
+
+        except Exception as e:
+            logger.error(f"Erro ao carregar exame: {e}")
+            QMessageBox.critical(self, "Erro", f"Erro ao carregar exame: {e}")
+
+    def open_roi_editor(self):
+        """Abre editor de ROIs."""
+        if self.current_image_data is None:
+            QMessageBox.warning(self, "Aviso", "Nenhuma imagem carregada")
+            return
+
+        dialog = ROIEditorDialog(self.current_image_data['visible_image'], self)
+        dialog.rois_saved.connect(self.on_rois_saved)
+
+        dialog.exec()
+
+    def on_rois_saved(self, rois: List[Dict[str, Any]]):
+        """
+        Callback quando ROIs são salvas.
+
+        Args:
+            rois: Lista de ROIs desenhadas
+        """
+        self.current_rois = rois
+        self.statusBar().showMessage(f"{len(rois)} ROI(s) criada(s)")
+
+        # Salva no banco se houver imagem ativa
+        # TODO: Implementar salvamento de ROIs no banco
+
+        QMessageBox.information(self, "ROIs Salvas", f"{len(rois)} ROI(s) foram criadas com sucesso!")
+
+    def show_about(self):
+        """Mostra dialog sobre o aplicativo."""
+        about_text = """
+        <h2>Termografia Médica - FASE 2</h2>
+        <p><b>Versão:</b> 2.0.0</p>
+        <p><b>Desenvolvido por:</b> Dr. Jorge Cecílio Daher Jr.</p>
+        <p><b>CRM-GO:</b> 6108</p>
+        <p><b>Especialidade:</b> Endocrinologia e Metabologia</p>
+        <hr>
+        <p>Sistema completo de análise termográfica médica com:</p>
+        <ul>
+            <li>Processamento de imagens FLIR radiométricas</li>
+            <li>Análise de assimetrias térmicas em dermátomos</li>
+            <li>Análise BTT (Brain Thermal Tunnel) para cefaleias</li>
+            <li>Geração automática de laudos com Claude AI</li>
+            <li>Editor de ROIs interativo</li>
+            <li>Exportação profissional em PDF</li>
+            <li>Histórico completo de pacientes</li>
+            <li>Temas personalizáveis</li>
+        </ul>
+        <p><i>Powered by Anthropic Claude AI</i></p>
+        """
+
+        QMessageBox.about(self, "Sobre - Termografia Médica", about_text)
 
 
 if __name__ == '__main__':
