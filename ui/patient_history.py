@@ -6,7 +6,7 @@ Permite busca, comparação e análise de evolução.
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QLineEdit, QTableWidget, QTableWidgetItem, QTextEdit,
-    QMessageBox, QSplitter, QGroupBox, QHeaderView
+    QMessageBox, QSplitter, QGroupBox, QHeaderView, QWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
