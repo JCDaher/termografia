@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
         self.current_image_data = None
         self.current_exam_id = None
         self.current_patient_id = None
+        self.selected_patient_id = None  # Paciente selecionado na busca
         self.loaded_images = []  # Lista de todas as imagens carregadas
         self.current_image_index = 0  # Índice da imagem atual
         self.current_rois = []  # ROIs desenhadas
@@ -97,6 +98,7 @@ class MainWindow(QMainWindow):
 
         # Tabs principais
         self.tabs = QTabWidget()
+        self.tabs.addTab(self.create_patient_search_tab(), "Buscar Paciente")
         self.tabs.addTab(self.create_exam_tab(), "Novo Exame")
         self.tabs.addTab(self.create_analysis_tab(), "Análise")
         self.tabs.addTab(self.create_report_tab(), "Laudo")
@@ -135,6 +137,81 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.lbl_api_status)
 
         return toolbar
+
+    def create_patient_search_tab(self) -> QWidget:
+        """Cria aba de busca de pacientes."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # Grupo de busca
+        search_group = QGroupBox("Buscar Paciente")
+        search_layout = QVBoxLayout()
+
+        # Campo de busca
+        search_h_layout = QHBoxLayout()
+        search_h_layout.addWidget(QLabel("Nome ou Prontuário:"))
+        self.input_patient_search = QLineEdit()
+        self.input_patient_search.setPlaceholderText("Digite para buscar...")
+        self.input_patient_search.returnPressed.connect(self.search_patients)
+        search_h_layout.addWidget(self.input_patient_search)
+
+        self.btn_search_patient = QPushButton("🔍 Buscar")
+        self.btn_search_patient.clicked.connect(self.search_patients)
+        search_h_layout.addWidget(self.btn_search_patient)
+
+        search_layout.addLayout(search_h_layout)
+        search_group.setLayout(search_layout)
+        layout.addWidget(search_group)
+
+        # Lista de pacientes encontrados
+        patients_group = QGroupBox("Pacientes Encontrados")
+        patients_layout = QVBoxLayout()
+
+        self.table_patients = QTableWidget()
+        self.table_patients.setColumnCount(4)
+        self.table_patients.setHorizontalHeaderLabels(["ID", "Nome", "Prontuário", "Gênero"])
+        self.table_patients.horizontalHeader().setStretchLastSection(True)
+        self.table_patients.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_patients.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table_patients.itemSelectionChanged.connect(self.on_patient_selected)
+        patients_layout.addWidget(self.table_patients)
+
+        patients_group.setLayout(patients_layout)
+        layout.addWidget(patients_group)
+
+        # Informações do paciente selecionado
+        info_group = QGroupBox("Histórico de Exames")
+        info_layout = QVBoxLayout()
+
+        self.lbl_selected_patient = QLabel("Nenhum paciente selecionado")
+        self.lbl_selected_patient.setStyleSheet("font-weight: bold; padding: 5px;")
+        info_layout.addWidget(self.lbl_selected_patient)
+
+        self.table_patient_exams = QTableWidget()
+        self.table_patient_exams.setColumnCount(4)
+        self.table_patient_exams.setHorizontalHeaderLabels(["ID", "Data", "Tipo", "Status"])
+        self.table_patient_exams.horizontalHeader().setStretchLastSection(True)
+        self.table_patient_exams.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        info_layout.addWidget(self.table_patient_exams)
+
+        # Botões de ação
+        btn_layout = QHBoxLayout()
+
+        self.btn_open_exam = QPushButton("Abrir Exame Selecionado")
+        self.btn_open_exam.clicked.connect(self.open_selected_exam)
+        self.btn_open_exam.setEnabled(False)
+        btn_layout.addWidget(self.btn_open_exam)
+
+        self.btn_new_exam_for_patient = QPushButton("Novo Exame para Este Paciente")
+        self.btn_new_exam_for_patient.clicked.connect(self.create_exam_for_selected_patient)
+        self.btn_new_exam_for_patient.setEnabled(False)
+        btn_layout.addWidget(self.btn_new_exam_for_patient)
+
+        info_layout.addLayout(btn_layout)
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+
+        return tab
 
     def create_exam_tab(self) -> QWidget:
         """Cria aba de novo exame."""
@@ -422,6 +499,182 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao criar exame: {e}")
+
+    def search_patients(self):
+        """Busca pacientes por nome ou prontuário."""
+        query = self.input_patient_search.text().strip()
+
+        if not query:
+            QMessageBox.warning(self, "Aviso", "Digite um nome ou prontuário para buscar")
+            return
+
+        try:
+            patients = self.db_manager.search_patients(query)
+
+            # Limpa tabela
+            self.table_patients.setRowCount(0)
+
+            # Preenche tabela com resultados
+            for patient in patients:
+                row = self.table_patients.rowCount()
+                self.table_patients.insertRow(row)
+
+                self.table_patients.setItem(row, 0, QTableWidgetItem(str(patient['id'])))
+                self.table_patients.setItem(row, 1, QTableWidgetItem(patient['name']))
+                self.table_patients.setItem(row, 2, QTableWidgetItem(patient['medical_record'] or "-"))
+                self.table_patients.setItem(row, 3, QTableWidgetItem(patient['gender'] or "-"))
+
+            if len(patients) == 0:
+                QMessageBox.information(self, "Busca", "Nenhum paciente encontrado")
+            else:
+                self.statusBar().showMessage(f"{len(patients)} paciente(s) encontrado(s)")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao buscar pacientes: {e}")
+            logger.error(f"Erro ao buscar pacientes: {e}", exc_info=True)
+
+    def on_patient_selected(self):
+        """Chamado quando um paciente é selecionado na tabela."""
+        selected_rows = self.table_patients.selectedItems()
+
+        if not selected_rows:
+            return
+
+        try:
+            # Pega o ID do paciente selecionado (primeira coluna)
+            patient_id = int(self.table_patients.item(selected_rows[0].row(), 0).text())
+            patient_name = self.table_patients.item(selected_rows[0].row(), 1).text()
+
+            # Atualiza label
+            self.lbl_selected_patient.setText(f"Paciente: {patient_name} (ID: {patient_id})")
+
+            # Busca exames do paciente
+            exams = self.db_manager.get_patient_exams(patient_id)
+
+            # Limpa tabela de exames
+            self.table_patient_exams.setRowCount(0)
+
+            # Preenche tabela com exames
+            for exam in exams:
+                row = self.table_patient_exams.rowCount()
+                self.table_patient_exams.insertRow(row)
+
+                exam_date = datetime.fromisoformat(exam['exam_date']).strftime('%d/%m/%Y %H:%M')
+
+                self.table_patient_exams.setItem(row, 0, QTableWidgetItem(str(exam['id'])))
+                self.table_patient_exams.setItem(row, 1, QTableWidgetItem(exam_date))
+                self.table_patient_exams.setItem(row, 2, QTableWidgetItem(exam['exam_type']))
+                self.table_patient_exams.setItem(row, 3, QTableWidgetItem(exam['status']))
+
+            # Habilita botões
+            self.btn_new_exam_for_patient.setEnabled(True)
+            self.btn_open_exam.setEnabled(len(exams) > 0)
+
+            # Armazena ID do paciente selecionado
+            self.selected_patient_id = patient_id
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao carregar dados do paciente: {e}")
+            logger.error(f"Erro ao carregar dados do paciente: {e}", exc_info=True)
+
+    def open_selected_exam(self):
+        """Abre o exame selecionado na tabela."""
+        selected_rows = self.table_patient_exams.selectedItems()
+
+        if not selected_rows:
+            QMessageBox.warning(self, "Aviso", "Selecione um exame para abrir")
+            return
+
+        try:
+            # Pega o ID do exame selecionado
+            exam_id = int(self.table_patient_exams.item(selected_rows[0].row(), 0).text())
+
+            # Carrega dados do exame
+            exam = self.db_manager.get_exam(exam_id)
+            if not exam:
+                QMessageBox.critical(self, "Erro", "Exame não encontrado")
+                return
+
+            # Atualiza estado atual
+            self.current_exam_id = exam_id
+            self.current_patient_id = exam['patient_id']
+
+            # Carrega imagens do exame
+            images = self.db_manager.get_exam_images(exam_id)
+
+            # Limpa imagens carregadas
+            self.loaded_images.clear()
+            self.list_images.clear()
+
+            # Carrega cada imagem
+            for img_data in images:
+                try:
+                    image_data = self.flir_processor.load_flir_image(img_data['image_path'])
+                    self.loaded_images.append(image_data)
+
+                    filename = Path(img_data['image_path']).name
+                    self.list_images.addItem(f"{len(self.loaded_images)}. {filename}")
+                except Exception as e:
+                    logger.error(f"Erro ao carregar imagem {img_data['image_path']}: {e}")
+
+            # Mostra primeira imagem se houver
+            if self.loaded_images:
+                self.current_image_index = 0
+                self.show_current_image()
+                self.lbl_image_count.setText(f"({len(self.loaded_images)})")
+                self.btn_process.setEnabled(True)
+                self.btn_toggle_heatmap.setEnabled(True)
+                self.update_navigation_buttons()
+
+            # Habilita importação
+            self.btn_import.setEnabled(True)
+
+            # Muda para aba de análise
+            self.tabs.setCurrentIndex(2)  # Aba "Análise"
+
+            self.statusBar().showMessage(f"Exame {exam_id} carregado com sucesso")
+            QMessageBox.information(self, "Sucesso",
+                                  f"Exame carregado!\n"
+                                  f"ID: {exam_id}\n"
+                                  f"Tipo: {exam['exam_type']}\n"
+                                  f"Imagens: {len(images)}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao abrir exame: {e}")
+            logger.error(f"Erro ao abrir exame: {e}", exc_info=True)
+
+    def create_exam_for_selected_patient(self):
+        """Cria novo exame para o paciente selecionado."""
+        if not hasattr(self, 'selected_patient_id'):
+            QMessageBox.warning(self, "Aviso", "Selecione um paciente primeiro")
+            return
+
+        try:
+            # Busca dados do paciente
+            patient = self.db_manager.get_patient(self.selected_patient_id)
+            if not patient:
+                QMessageBox.critical(self, "Erro", "Paciente não encontrado")
+                return
+
+            # Preenche formulário na aba "Novo Exame"
+            self.input_patient_name.setText(patient['name'])
+            self.input_medical_record.setText(patient['medical_record'] or "")
+
+            if patient['gender']:
+                index = self.combo_gender.findText(patient['gender'])
+                if index >= 0:
+                    self.combo_gender.setCurrentIndex(index)
+
+            # Muda para aba "Novo Exame"
+            self.tabs.setCurrentIndex(1)
+
+            QMessageBox.information(self, "Informação",
+                                  f"Formulário preenchido com dados de:\n{patient['name']}\n\n"
+                                  "Preencha os dados do exame e clique em 'Criar Novo Exame'")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao preparar novo exame: {e}")
+            logger.error(f"Erro ao preparar novo exame: {e}", exc_info=True)
 
     def import_flir_image(self):
         """Importa uma ou múltiplas imagens FLIR."""
