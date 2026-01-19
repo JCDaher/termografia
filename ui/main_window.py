@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QFileDialog, QTextEdit, QTabWidget, QGroupBox,
     QLineEdit, QComboBox, QSpinBox, QMessageBox, QProgressBar,
-    QTableWidget, QTableWidgetItem, QSplitter, QFormLayout
+    QTableWidget, QTableWidgetItem, QSplitter, QFormLayout, QListWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
@@ -16,7 +16,7 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from core.flir_processor import FLIRProcessor
 from core.thermal_analyzer import ThermalAnalyzer
@@ -61,6 +61,8 @@ class MainWindow(QMainWindow):
         self.current_image_data = None
         self.current_exam_id = None
         self.current_patient_id = None
+        self.loaded_images = []  # Lista de todas as imagens carregadas
+        self.current_image_index = 0  # Índice da imagem atual
 
         self.init_ui()
         self.check_api_key()
@@ -97,8 +99,8 @@ class MainWindow(QMainWindow):
         """Cria barra de ferramentas superior."""
         toolbar = QHBoxLayout()
 
-        # Botão importar imagem
-        self.btn_import = QPushButton("📁 Importar Imagem FLIR")
+        # Botão importar imagem (suporta múltiplas)
+        self.btn_import = QPushButton("📁 Importar Imagem(ns) FLIR")
         self.btn_import.clicked.connect(self.import_flir_image)
         toolbar.addWidget(self.btn_import)
 
@@ -180,12 +182,43 @@ class MainWindow(QMainWindow):
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
 
+        # Lista de imagens carregadas
+        images_header = QHBoxLayout()
+        images_header.addWidget(QLabel("Imagens Carregadas:"))
+        self.lbl_image_count = QLabel("(0)")
+        images_header.addWidget(self.lbl_image_count)
+        images_header.addStretch()
+        left_layout.addLayout(images_header)
+
+        self.list_images = QListWidget()
+        self.list_images.setMaximumHeight(80)
+        self.list_images.itemClicked.connect(self.on_image_selected)
+        left_layout.addWidget(self.list_images)
+
+        # Navegação entre imagens
+        nav_layout = QHBoxLayout()
+        self.btn_prev_image = QPushButton("◀ Anterior")
+        self.btn_prev_image.clicked.connect(self.show_previous_image)
+        self.btn_prev_image.setEnabled(False)
+
+        self.lbl_image_info = QLabel("Nenhuma imagem")
+        self.lbl_image_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.btn_next_image = QPushButton("Próxima ▶")
+        self.btn_next_image.clicked.connect(self.show_next_image)
+        self.btn_next_image.setEnabled(False)
+
+        nav_layout.addWidget(self.btn_prev_image)
+        nav_layout.addWidget(self.lbl_image_info)
+        nav_layout.addWidget(self.btn_next_image)
+        left_layout.addLayout(nav_layout)
+
         self.lbl_image = QLabel("Nenhuma imagem carregada")
         self.lbl_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_image.setMinimumSize(400, 300)
         self.lbl_image.setStyleSheet("border: 1px solid #ccc; background-color: #f0f0f0;")
 
-        left_layout.addWidget(QLabel("Imagem Térmica:"))
+        left_layout.addWidget(QLabel("Visualização:"))
         left_layout.addWidget(self.lbl_image)
 
         # Botão toggle heatmap
@@ -379,54 +412,80 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Erro", f"Erro ao criar exame: {e}")
 
     def import_flir_image(self):
-        """Importa imagem FLIR."""
-        file_path, _ = QFileDialog.getOpenFileName(
+        """Importa uma ou múltiplas imagens FLIR."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Selecionar Imagem FLIR",
+            "Selecionar Imagem(ns) FLIR - Múltipla seleção habilitada",
             "",
             "Imagens (*.jpg *.jpeg *.png *.bmp)"
         )
 
-        if not file_path:
+        if not file_paths:
             return
 
         try:
-            # Carrega e processa imagem
-            self.current_image_data = self.flir_processor.load_flir_image(file_path)
+            imported_count = 0
+            errors = []
 
-            # Exibe imagem
-            self.display_image(self.current_image_data['visible_image'])
+            for file_path in file_paths:
+                try:
+                    # Carrega e processa imagem
+                    image_data = self.flir_processor.load_flir_image(file_path)
 
-            # Mostra estatísticas
-            stats = self.current_image_data['statistics']
-            stats_text = f"""
-Arquivo: {Path(file_path).name}
-Resolução: {self.current_image_data['resolution'][0]}x{self.current_image_data['resolution'][1]}
+                    # Adiciona à lista de imagens carregadas
+                    self.loaded_images.append(image_data)
 
-Temperatura Mínima: {stats['min_temp']:.2f}°C
-Temperatura Máxima: {stats['max_temp']:.2f}°C
-Temperatura Média: {stats['mean_temp']:.2f}°C
-Desvio Padrão: {stats['std_temp']:.2f}°C
-"""
-            self.text_stats.setText(stats_text)
+                    # Adiciona à lista visual
+                    filename = Path(file_path).name
+                    self.list_images.addItem(f"{len(self.loaded_images)}. {filename}")
 
-            # Salva no banco se houver exame ativo
-            if self.current_exam_id:
-                self.db_manager.add_thermal_image(
-                    exam_id=self.current_exam_id,
-                    image_path=file_path,
-                    image_type='FLIR',
-                    min_temp=stats['min_temp'],
-                    max_temp=stats['max_temp'],
-                    avg_temp=stats['mean_temp']
-                )
+                    # Salva no banco se houver exame ativo
+                    if self.current_exam_id:
+                        stats = image_data['statistics']
+                        self.db_manager.add_thermal_image(
+                            exam_id=self.current_exam_id,
+                            image_path=file_path,
+                            image_type='FLIR',
+                            sequence_number=len(self.loaded_images),
+                            min_temp=stats['min_temp'],
+                            max_temp=stats['max_temp'],
+                            avg_temp=stats['mean_temp']
+                        )
 
-            self.btn_process.setEnabled(True)
-            self.btn_toggle_heatmap.setEnabled(True)
-            self.statusBar().showMessage("Imagem importada com sucesso")
+                    imported_count += 1
+
+                except Exception as e:
+                    errors.append(f"{Path(file_path).name}: {str(e)}")
+                    logger.error(f"Erro ao importar {file_path}: {e}")
+
+            # Atualiza interface
+            if imported_count > 0:
+                # Mostra primeira imagem
+                self.current_image_index = 0
+                self.show_current_image()
+
+                # Atualiza contador
+                self.lbl_image_count.setText(f"({len(self.loaded_images)})")
+
+                # Habilita botões
+                self.btn_process.setEnabled(True)
+                self.btn_toggle_heatmap.setEnabled(True)
+                self.update_navigation_buttons()
+
+                # Mensagem de sucesso
+                msg = f"{imported_count} imagem(ns) importada(s) com sucesso"
+                if errors:
+                    msg += f"\n\n{len(errors)} erro(s):\n" + "\n".join(errors[:5])
+                    if len(errors) > 5:
+                        msg += f"\n... e mais {len(errors) - 5} erro(s)"
+
+                self.statusBar().showMessage(msg)
+                QMessageBox.information(self, "Importação", msg)
+            else:
+                QMessageBox.warning(self, "Erro", "Nenhuma imagem foi importada com sucesso")
 
         except Exception as e:
-            QMessageBox.critical(self, "Erro", f"Erro ao importar imagem: {e}")
+            QMessageBox.critical(self, "Erro", f"Erro ao importar imagens: {e}")
 
     def display_image(self, image: np.ndarray):
         """Exibe imagem no label."""
@@ -448,6 +507,72 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
         )
 
         self.lbl_image.setPixmap(scaled_pixmap)
+
+    def show_current_image(self):
+        """Exibe a imagem atual baseada no índice."""
+        if not self.loaded_images or self.current_image_index >= len(self.loaded_images):
+            return
+
+        self.current_image_data = self.loaded_images[self.current_image_index]
+
+        # Exibe imagem
+        self.display_image(self.current_image_data['visible_image'])
+
+        # Mostra estatísticas
+        stats = self.current_image_data['statistics']
+        filename = Path(self.current_image_data['image_path']).name
+        stats_text = f"""
+Arquivo: {filename}
+Imagem: {self.current_image_index + 1} de {len(self.loaded_images)}
+Resolução: {self.current_image_data['resolution'][0]}x{self.current_image_data['resolution'][1]}
+
+Temperatura Mínima: {stats['min_temp']:.2f}°C
+Temperatura Máxima: {stats['max_temp']:.2f}°C
+Temperatura Média: {stats['mean_temp']:.2f}°C
+Desvio Padrão: {stats['std_temp']:.2f}°C
+"""
+        self.text_stats.setText(stats_text)
+
+        # Atualiza label de info
+        self.lbl_image_info.setText(f"Imagem {self.current_image_index + 1}/{len(self.loaded_images)}")
+
+        # Reseta heatmap
+        self.btn_toggle_heatmap.setText("Mostrar Heatmap")
+
+        # Atualiza seleção na lista
+        self.list_images.setCurrentRow(self.current_image_index)
+
+    def show_previous_image(self):
+        """Mostra a imagem anterior."""
+        if self.current_image_index > 0:
+            self.current_image_index -= 1
+            self.show_current_image()
+            self.update_navigation_buttons()
+
+    def show_next_image(self):
+        """Mostra a próxima imagem."""
+        if self.current_image_index < len(self.loaded_images) - 1:
+            self.current_image_index += 1
+            self.show_current_image()
+            self.update_navigation_buttons()
+
+    def on_image_selected(self, item):
+        """Callback quando usuário seleciona imagem na lista."""
+        row = self.list_images.row(item)
+        if 0 <= row < len(self.loaded_images):
+            self.current_image_index = row
+            self.show_current_image()
+            self.update_navigation_buttons()
+
+    def update_navigation_buttons(self):
+        """Atualiza estado dos botões de navegação."""
+        if not self.loaded_images:
+            self.btn_prev_image.setEnabled(False)
+            self.btn_next_image.setEnabled(False)
+            return
+
+        self.btn_prev_image.setEnabled(self.current_image_index > 0)
+        self.btn_next_image.setEnabled(self.current_image_index < len(self.loaded_images) - 1)
 
     def toggle_heatmap(self):
         """Alterna entre imagem original e heatmap."""
