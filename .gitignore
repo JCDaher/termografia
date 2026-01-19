@@ -1,0 +1,49 @@
+﻿# API Keys e configurações sensíveis
+.env
+config.json
+.secret.key
+*.key
+
+# Banco de dados com dados de pacientes
+*.db
+*.sqlite
+thermography.db
+
+# Imagens térmicas de pacientes reais
+data/patient_images/
+uploads/
+/patient_data/
+example_images/
+
+# Laudos gerados
+reports/*.pdf
+reports/*.html
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+audit_*.log
+
+# Arquivos temporários
+temp/
+tmp/
+*.tmp
+
+# PyInstaller
+build/
+dist/
+*.spec
