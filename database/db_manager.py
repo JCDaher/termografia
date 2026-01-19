@@ -72,12 +72,31 @@ class DatabaseManager:
 
     # ===== PACIENTES =====
 
+    def get_patient_by_medical_record(self, medical_record: str) -> Optional[Dict[str, Any]]:
+        """
+        Busca um paciente pelo número do prontuário.
+
+        Args:
+            medical_record: Número do prontuário
+
+        Returns:
+            Dicionário com dados do paciente ou None se não encontrado
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM patients WHERE medical_record = ?", (medical_record,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
     def create_patient(self, name: str, birth_date: Optional[str] = None,
                       gender: Optional[str] = None, medical_record: Optional[str] = None,
                       phone: Optional[str] = None, email: Optional[str] = None,
                       address: Optional[str] = None, notes: Optional[str] = None) -> int:
         """
-        Cria um novo paciente.
+        Cria um novo paciente ou retorna o ID de um paciente existente com o mesmo prontuário.
 
         Args:
             name: Nome do paciente
@@ -90,8 +109,15 @@ class DatabaseManager:
             notes: Observações
 
         Returns:
-            ID do paciente criado
+            ID do paciente criado ou encontrado
         """
+        # Se houver medical_record, verifica se já existe um paciente com ele
+        if medical_record:
+            existing_patient = self.get_patient_by_medical_record(medical_record)
+            if existing_patient:
+                logger.info(f"Paciente com prontuário {medical_record} já existe. ID: {existing_patient['id']}")
+                return existing_patient['id']
+
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
