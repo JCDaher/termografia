@@ -961,14 +961,39 @@ Significado Clínico:
 
     def open_roi_editor(self):
         """Abre editor de ROIs."""
-        if self.current_image_data is None:
-            QMessageBox.warning(self, "Aviso", "Nenhuma imagem carregada")
-            return
+        try:
+            if self.current_image_data is None:
+                QMessageBox.warning(self, "Aviso", "Nenhuma imagem carregada.\n\nPor favor, importe uma imagem primeiro.")
+                return
 
-        dialog = ROIEditorDialog(self.current_image_data['visible_image'], self)
-        dialog.rois_saved.connect(self.on_rois_saved)
+            # Verifica se a imagem está válida
+            if 'visible_image' not in self.current_image_data:
+                QMessageBox.critical(self, "Erro", "Dados da imagem estão corrompidos")
+                logger.error("current_image_data não contém 'visible_image'")
+                return
 
-        dialog.exec()
+            image = self.current_image_data['visible_image']
+
+            # Valida que é um array numpy válido
+            if not isinstance(image, np.ndarray):
+                QMessageBox.critical(self, "Erro", "Formato de imagem inválido")
+                logger.error(f"Imagem não é numpy array, tipo: {type(image)}")
+                return
+
+            logger.info(f"Abrindo editor de ROIs - Imagem: {image.shape}, dtype: {image.dtype}")
+
+            dialog = ROIEditorDialog(image, self)
+            dialog.rois_saved.connect(self.on_rois_saved)
+
+            dialog.exec()
+
+        except Exception as e:
+            logger.error(f"Erro ao abrir editor de ROIs: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Erro no Editor de ROIs",
+                f"Ocorreu um erro ao abrir o editor de ROIs:\n\n{str(e)}\n\nVerifique os logs para mais detalhes."
+            )
 
     def on_rois_saved(self, rois: List[Dict[str, Any]]):
         """

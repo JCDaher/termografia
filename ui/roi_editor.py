@@ -48,12 +48,24 @@ class ROICanvas(QLabel):
             image: Imagem BGR do OpenCV
         """
         try:
+            # Garante que a imagem seja contígua em memória
+            if not image.flags['C_CONTIGUOUS']:
+                image = np.ascontiguousarray(image)
+
             # Converte BGR para RGB
             rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+            # Garante que rgb_image seja contígua
+            rgb_image = np.ascontiguousarray(rgb_image)
+
             height, width, channel = rgb_image.shape
             bytes_per_line = 3 * width
 
             q_image = QImage(rgb_image.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+
+            # Cria cópia para evitar problemas de memória
+            q_image = q_image.copy()
+
             pixmap = QPixmap.fromImage(q_image)
 
             # Escala para caber no canvas
@@ -63,11 +75,11 @@ class ROICanvas(QLabel):
                 Qt.TransformationMode.SmoothTransformation
             )
 
-            self.background_image = image
+            self.background_image = image.copy()
             self.update()
 
         except Exception as e:
-            logger.error(f"Erro ao definir imagem: {e}")
+            logger.error(f"Erro ao definir imagem: {e}", exc_info=True)
 
     def set_mode(self, mode: str):
         """
@@ -255,10 +267,18 @@ class ROIEditorDialog(QDialog):
         self.setWindowTitle("Editor de ROIs - Termografia")
         self.resize(900, 700)
 
-        self.image = image
+        # Garante que a imagem seja contígua
+        if not image.flags['C_CONTIGUOUS']:
+            image = np.ascontiguousarray(image)
+
+        self.image = image.copy()  # Faz cópia para evitar problemas de referência
         self.rois = []
 
-        self.init_ui()
+        try:
+            self.init_ui()
+        except Exception as e:
+            logger.error(f"Erro ao inicializar UI do ROI Editor: {e}", exc_info=True)
+            raise
 
     def init_ui(self):
         """Inicializa a interface."""
