@@ -929,6 +929,19 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                     scaled_points = [(int(x * scale_x), int(y * scale_y)) for x, y in points]
                     logger.info(f"  Coords originais: {points[0]}, Escaladas: {scaled_points[0]}")
 
+                    # Verificar se os pontos estão dentro dos limites
+                    thermal_h, thermal_w = thermal_data.shape[:2]
+                    out_of_bounds = []
+                    for i, (x, y) in enumerate(scaled_points):
+                        if x < 0 or x >= thermal_w or y < 0 or y >= thermal_h:
+                            out_of_bounds.append(f"ponto[{i}]=({x},{y})")
+
+                    if out_of_bounds:
+                        logger.warning(f"  ⚠️ ROI '{name}': Pontos fora dos limites [{thermal_w}x{thermal_h}]: {', '.join(out_of_bounds)}")
+                        # Cortar pontos para ficarem dentro dos limites
+                        scaled_points = [(max(0, min(x, thermal_w-1)), max(0, min(y, thermal_h-1))) for x, y in scaled_points]
+                        logger.info(f"  Pontos corrigidos: {scaled_points}")
+
                     # Criar máscara para o ROI
                     mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
                     pts = np.array(scaled_points, dtype=np.int32)
@@ -941,7 +954,7 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                         roi_temps[name] = avg_temp
                         logger.info(f"  ✅ ROI '{name}': {avg_temp:.2f}°C ({len(roi_region)} pixels)")
                     else:
-                        logger.warning(f"  ❌ ROI '{name}' não capturou nenhum pixel - pode estar fora da imagem")
+                        logger.warning(f"  ❌ ROI '{name}' não capturou nenhum pixel (pontos: {scaled_points[:3]}...)")
 
                 # Tentar identificar ROIs esquerda/direita automaticamente
                 left_temp = None
@@ -1082,6 +1095,18 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                                 # Escala as coordenadas para o tamanho dos dados térmicos
                                 scaled_points = [(int(x * scale_x), int(y * scale_y)) for x, y in points]
 
+                                # Verificar se os pontos estão dentro dos limites
+                                thermal_h, thermal_w = thermal_data.shape[:2]
+                                out_of_bounds = []
+                                for i, (x, y) in enumerate(scaled_points):
+                                    if x < 0 or x >= thermal_w or y < 0 or y >= thermal_h:
+                                        out_of_bounds.append(f"ponto[{i}]=({x},{y})")
+
+                                if out_of_bounds:
+                                    logger.warning(f"  Imagem {idx+1}, ROI '{name}': Pontos fora dos limites [{thermal_w}x{thermal_h}]: {', '.join(out_of_bounds)}")
+                                    # Cortar pontos para ficarem dentro dos limites
+                                    scaled_points = [(max(0, min(x, thermal_w-1)), max(0, min(y, thermal_h-1))) for x, y in scaled_points]
+
                                 # Criar máscara
                                 import cv2
                                 mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
@@ -1092,6 +1117,8 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                                 roi_region = thermal_data[mask == 255]
                                 if len(roi_region) > 0:
                                     roi_temps[name] = np.mean(roi_region)
+                                else:
+                                    logger.warning(f"  Imagem {idx+1}, ROI '{name}': Máscara não capturou pixels (pontos escalados: {scaled_points[:3]}...)")
 
                             # Tentar identificar esquerda/direita
                             left_temp = None
@@ -1667,11 +1694,29 @@ Significado Clínico:
                 # Escala as coordenadas para o tamanho dos dados térmicos
                 scaled_points = [(int(x * scale_x), int(y * scale_y)) for x, y in points]
                 logger.info(f"  Original: {points[0]}, Escalado: {scaled_points[0]}")
+                logger.info(f"  Todos os pontos escalados: {scaled_points}")
+
+                # Verificar se os pontos estão dentro dos limites
+                thermal_h, thermal_w = thermal_data.shape[:2]
+                out_of_bounds = []
+                for i, (x, y) in enumerate(scaled_points):
+                    if x < 0 or x >= thermal_w or y < 0 or y >= thermal_h:
+                        out_of_bounds.append(f"ponto[{i}]=({x},{y})")
+
+                if out_of_bounds:
+                    logger.warning(f"  ⚠️ Pontos fora dos limites [{thermal_w}x{thermal_h}]: {', '.join(out_of_bounds)}")
+                    # Cortar pontos para ficarem dentro dos limites
+                    scaled_points = [(max(0, min(x, thermal_w-1)), max(0, min(y, thermal_h-1))) for x, y in scaled_points]
+                    logger.info(f"  Pontos corrigidos: {scaled_points}")
 
                 # Calcular temperatura da ROI
                 mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
                 pts = np.array(scaled_points, dtype=np.int32)
                 cv2.fillPoly(mask, [pts], 255)
+
+                # Log da máscara
+                pixels_in_mask = np.sum(mask == 255)
+                logger.info(f"  Pixels na máscara: {pixels_in_mask}")
 
                 roi_region = thermal_data[mask == 255]
                 if len(roi_region) > 0:
