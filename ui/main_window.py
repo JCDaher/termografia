@@ -1538,7 +1538,44 @@ Significado Clínico:
         """Callback quando há erro na geração."""
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage("Erro ao gerar laudo")
-        QMessageBox.critical(self, "Erro", f"Erro ao gerar laudo:\n{error_msg}")
+
+        # Detecta erro de descriptografia
+        if "descriptografar" in error_msg.lower() or "decrypt" in error_msg.lower():
+            reply = QMessageBox.critical(
+                self,
+                "Erro ao carregar API Key",
+                f"{error_msg}\n\n"
+                f"A API key não pode ser descriptografada. Isso geralmente acontece quando:\n"
+                f"• A API key foi configurada em outra máquina ou usuário\n"
+                f"• O sistema foi reinstalado ou atualizado\n\n"
+                f"Deseja reconfigurar a API key agora?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                # Remove credenciais antigas
+                try:
+                    from config.security import get_security_manager
+                    security_manager = get_security_manager()
+                    security_manager.delete_api_key()
+                    logger.info("Credenciais antigas removidas")
+                except Exception as e:
+                    logger.error(f"Erro ao remover credenciais: {e}")
+
+                # Muda para aba de configurações
+                self.tabs.setCurrentIndex(3)  # Aba Configurações
+
+                QMessageBox.information(
+                    self,
+                    "Reconfigurar API Key",
+                    "Por favor, insira sua API key da Anthropic na aba Configurações\n"
+                    "e clique em 'Salvar API Key'.\n\n"
+                    "Você pode obter uma API key em:\n"
+                    "https://console.anthropic.com/settings/keys"
+                )
+        else:
+            # Outros erros
+            QMessageBox.critical(self, "Erro", f"Erro ao gerar laudo:\n{error_msg}")
 
     def save_report(self):
         """Salva laudo no banco de dados."""

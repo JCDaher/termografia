@@ -223,6 +223,16 @@ class SecurityManager:
 
         except FileNotFoundError:
             return None
+        except SecurityError:
+            # Erro de descriptografia - provavelmente mudou de máquina/usuário
+            raise SecurityError(
+                "Não foi possível descriptografar a API key. "
+                "Isso geralmente acontece quando:\n"
+                "• A API key foi configurada em outra máquina\n"
+                "• O nome de usuário ou hostname mudou\n\n"
+                "Solução: Reconfigure a API key usando:\n"
+                "Configurações > Configurar API Key"
+            )
         except Exception as e:
             raise SecurityError(f"Erro ao carregar API key: {e}")
 

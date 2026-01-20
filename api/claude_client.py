@@ -35,13 +35,18 @@ class ClaudeClient:
 
         # Carrega API key
         if api_key is None:
-            security_manager = get_security_manager()
-            api_key = security_manager.load_api_key()
+            try:
+                security_manager = get_security_manager()
+                api_key = security_manager.load_api_key()
 
-            if api_key is None:
-                raise ClaudeClientError(
-                    "API key não encontrada. Configure usando SecurityManager."
-                )
+                if api_key is None:
+                    raise ClaudeClientError(
+                        "API key não encontrada. Configure usando:\n"
+                        "Configurações > Configurar API Key"
+                    )
+            except Exception as e:
+                # Se houver erro ao carregar (ex: erro de descriptografia)
+                raise ClaudeClientError(str(e))
 
         # Inicializa cliente Anthropic
         try:
