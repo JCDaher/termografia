@@ -13,7 +13,7 @@ from typing import Optional
 try:
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     CRYPTOGRAPHY_AVAILABLE = True
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
@@ -103,11 +103,13 @@ class SecurityManager:
         password = b"TermografiaApp-2024-Secure-Key"
 
         # Deriva chave usando PBKDF2
-        kdf = PBKDF2(
+        from cryptography.hazmat.backends import default_backend
+        kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
             iterations=100000,
+            backend=default_backend()
         )
         key = base64.urlsafe_b64encode(kdf.derive(password))
         return key
