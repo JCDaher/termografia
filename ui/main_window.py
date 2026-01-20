@@ -857,13 +857,95 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
             self.btn_toggle_heatmap.setText("Mostrar Heatmap")
 
     def process_image(self):
-        """Processa imagem térmica."""
+        """Processa imagem térmica e ROIs automaticamente."""
         if not self.current_image_data:
             QMessageBox.warning(self, "Erro", "Nenhuma imagem carregada")
             return
 
-        self.statusBar().showMessage("Processando imagem...")
-        QMessageBox.information(self, "Processamento", "Imagem processada com sucesso!")
+        try:
+            self.statusBar().showMessage("Processando imagem e ROIs...")
+
+            # Se houver ROIs salvas, processar
+            if self.current_rois and len(self.current_rois) > 0:
+                thermal_data = self.current_image_data.get('thermal_data')
+
+                if thermal_data is None:
+                    QMessageBox.warning(self, "Aviso",
+                        "Dados térmicos não disponíveis para processar ROIs.\n"
+                        "As estatísticas gerais da imagem foram calculadas.")
+                    self.btn_generate_report.setEnabled(True)
+                    return
+
+                # Calcular temperaturas de cada ROI
+                roi_temps = {}
+                for roi in self.current_rois:
+                    name = roi['name']
+                    points = roi['points']
+
+                    # Criar máscara para o ROI
+                    import cv2
+                    mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
+                    pts = np.array(points, dtype=np.int32)
+                    cv2.fillPoly(mask, [pts], 255)
+
+                    # Calcular temperatura média na ROI
+                    roi_region = thermal_data[mask == 255]
+                    if len(roi_region) > 0:
+                        avg_temp = np.mean(roi_region)
+                        roi_temps[name] = avg_temp
+
+                # Tentar identificar ROIs esquerda/direita automaticamente
+                left_temp = None
+                right_temp = None
+
+                for name, temp in roi_temps.items():
+                    name_lower = name.lower()
+                    if 'esq' in name_lower or 'left' in name_lower or 'e' == name_lower[-1]:
+                        left_temp = temp
+                    elif 'dir' in name_lower or 'right' in name_lower or 'd' == name_lower[-1]:
+                        right_temp = temp
+
+                # Auto-preencher campos se encontrou ambos os lados
+                if left_temp is not None and right_temp is not None:
+                    self.input_left_temp.setText(f"{left_temp:.2f}")
+                    self.input_right_temp.setText(f"{right_temp:.2f}")
+
+                    # Calcular assimetria automaticamente
+                    self.analyze_asymmetry()
+
+                    QMessageBox.information(self, "Processamento Completo",
+                        f"ROIs processadas com sucesso!\n\n"
+                        f"📊 Temperaturas detectadas:\n"
+                        f"• Esquerda: {left_temp:.2f}°C\n"
+                        f"• Direita: {right_temp:.2f}°C\n\n"
+                        f"ΔT calculado automaticamente.\n"
+                        f"Verifique o resultado abaixo.")
+                else:
+                    # Mostrar temperaturas encontradas
+                    roi_summary = "\n".join([f"• {name}: {temp:.2f}°C" for name, temp in roi_temps.items()])
+                    QMessageBox.information(self, "ROIs Processadas",
+                        f"Temperaturas calculadas:\n\n{roi_summary}\n\n"
+                        f"💡 Dica: Nomeie as ROIs com 'Esquerdo/Direito' ou 'Esq/Dir' "
+                        f"para preenchimento automático dos campos.")
+
+            else:
+                # Sem ROIs, apenas mostrar que está pronto
+                QMessageBox.information(self, "Processamento",
+                    "Imagem processada!\n\n"
+                    "💡 Para análise de assimetria:\n"
+                    "1. Use Editor de ROIs (Ferramentas > Editor de ROIs)\n"
+                    "2. Desenhe ROIs nas regiões de interesse\n"
+                    "3. Nomeie como 'Esquerdo' e 'Direito'\n"
+                    "4. Clique em Processar novamente\n\n"
+                    "Ou digite as temperaturas manualmente abaixo.")
+
+            # Habilita geração de laudo
+            self.btn_generate_report.setEnabled(True)
+            self.statusBar().showMessage("Processamento concluído")
+
+        except Exception as e:
+            logger.error(f"Erro ao processar imagem: {e}", exc_info=True)
+            QMessageBox.critical(self, "Erro", f"Erro ao processar: {e}")
 
     def analyze_asymmetry(self):
         """Analisa assimetria térmica."""
@@ -1261,7 +1343,13 @@ Significado Clínico:
         # Salva no banco se houver imagem ativa
         # TODO: Implementar salvamento de ROIs no banco
 
-        QMessageBox.information(self, "ROIs Salvas", f"{len(rois)} ROI(s) foram criadas com sucesso!")
+        # Mensagem com instrução para processar
+        roi_names = "\n".join([f"• {roi['name']}" for roi in rois])
+        QMessageBox.information(self, "ROIs Salvas",
+            f"{len(rois)} ROI(s) criadas com sucesso!\n\n"
+            f"ROIs criadas:\n{roi_names}\n\n"
+            f"⚙️ Próximo passo: Clique em 'Processar' para calcular\n"
+            f"as temperaturas de cada ROI automaticamente!")
 
     def show_about(self):
         """Mostra dialog sobre o aplicativo."""
