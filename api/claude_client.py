@@ -18,14 +18,15 @@ logger = logging.getLogger(__name__)
 class ClaudeClient:
     """Cliente para integração com Claude AI da Anthropic."""
 
-    # Modelos disponíveis (ordenados por preferência)
-    MODEL_OPUS_4 = "claude-opus-4-20250514"  # Mais recente (pode não estar disponível)
+    # Modelos disponíveis (ordenados por preferência e disponibilidade)
+    # Usando modelos com maior chance de estar acessível em qualquer tier de API key
     MODEL_SONNET_3_5 = "claude-3-5-sonnet-20241022"  # Sonnet 3.5 mais recente
     MODEL_SONNET_3_5_OLD = "claude-3-5-sonnet-20240620"  # Versão estável
     MODEL_HAIKU = "claude-3-5-haiku-20241022"  # Mais rápido e econômico
+    MODEL_OPUS_3 = "claude-3-opus-20240229"  # Opus 3 (legado, mas ainda disponível)
 
-    # Modelo padrão
-    MODEL_SONNET = MODEL_SONNET_3_5_OLD
+    # Modelo padrão - Haiku é o mais acessível e econômico
+    MODEL_SONNET = MODEL_HAIKU
 
     def __init__(self, api_key: Optional[str] = None, model: str = MODEL_SONNET):
         """
@@ -100,12 +101,12 @@ class ClaudeClient:
                 logger.info(f"Gerando laudo {exam_type} com Claude...")
 
             # Chamada à API com fallback automático para múltiplos modelos
-            # Tenta em ordem de preferência até encontrar um que funcione
+            # Tenta em ordem: mais acessível primeiro (Haiku), depois mais avançados
             models_to_try = [
-                self.model,  # Modelo configurado (geralmente Sonnet 3.5 old)
+                self.MODEL_HAIKU,  # Mais acessível e econômico - tenta primeiro
+                self.MODEL_SONNET_3_5_OLD,  # Sonnet 3.5 versão estável
                 self.MODEL_SONNET_3_5,  # Sonnet 3.5 mais recente
-                self.MODEL_HAIKU,  # Haiku (mais econômico)
-                self.MODEL_OPUS_4,  # Opus 4 (se disponível)
+                self.MODEL_OPUS_3,  # Opus 3 (requer tier pago)
             ]
 
             # Remove duplicatas mantendo ordem
@@ -163,15 +164,38 @@ class ClaudeClient:
             logger.error(f"❌ Todos os modelos falharam!")
             logger.error(f"Modelos tentados: {models_to_try}")
             logger.error(f"Último erro: {last_error}")
-            raise ClaudeClientError(
-                f"Nenhum modelo disponível funcionou.\n\n"
-                f"Modelos tentados: {', '.join(models_to_try)}\n\n"
-                f"Último erro: {last_error}\n\n"
-                f"Verifique:\n"
-                f"• Sua API key tem saldo/créditos\n"
-                f"• Sua conta tem acesso aos modelos Claude\n"
-                f"• Conexão com internet está funcionando"
+
+            # Mensagem de erro mais detalhada e útil
+            error_msg = (
+                "❌ Nenhum modelo Claude disponível funcionou.\n\n"
+                f"Modelos tentados:\n"
             )
+            for m in models_to_try:
+                error_msg += f"  • {m}\n"
+
+            error_msg += (
+                f"\nÚltimo erro: {last_error}\n\n"
+                "🔍 POSSÍVEIS CAUSAS:\n\n"
+                "1. API Key sem créditos\n"
+                "   → Verifique em: https://console.anthropic.com/settings/billing\n"
+                "   → Adicione créditos ou configure faturamento\n\n"
+                "2. API Key sem acesso aos modelos\n"
+                "   → Algumas contas têm acesso limitado\n"
+                "   → Tente criar uma nova API key\n\n"
+                "3. API Key inválida\n"
+                "   → Verifique se copiou corretamente (deve começar com 'sk-ant-api03-')\n"
+                "   → Crie uma nova em: https://console.anthropic.com/settings/keys\n\n"
+                "4. Problemas de rede\n"
+                "   → Verifique sua conexão com internet\n"
+                "   → Tente desabilitar VPN/proxy\n\n"
+                "💡 SOLUÇÃO RÁPIDA:\n"
+                "   1. Acesse: https://console.anthropic.com/settings/keys\n"
+                "   2. Crie uma nova API key\n"
+                "   3. Adicione créditos (mínimo $5 USD)\n"
+                "   4. Configure na aplicação (aba Configurações)"
+            )
+
+            raise ClaudeClientError(error_msg)
         except Exception as e:
             logger.error(f"Erro ao gerar laudo: {e}")
             raise ClaudeClientError(f"Erro ao gerar laudo: {e}")
