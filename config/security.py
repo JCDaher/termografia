@@ -1,18 +1,26 @@
 """
-Módulo de segurança para criptografia de credenciais usando DPAPI do Windows.
-Permite armazenamento seguro da API Key da Anthropic.
+Módulo de segurança para criptografia de credenciais multiplataforma.
+Permite armazenamento seguro da API Key da Anthropic no Windows, macOS e Linux.
 """
 
-import win32crypt
 import base64
 import os
 import json
+import platform
 from pathlib import Path
 from typing import Optional
 
+try:
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
+
 
 class SecurityManager:
-    """Gerencia criptografia e descriptografia de credenciais usando DPAPI do Windows."""
+    """Gerencia criptografia e descriptografia de credenciais de forma multiplataforma."""
 
     def __init__(self, config_dir: Optional[Path] = None):
         """
@@ -20,20 +28,126 @@ class SecurityManager:
 
         Args:
             config_dir: Diretório para armazenar arquivo de configuração.
-                       Se None, usa %APPDATA%/TermografiaApp
+                       Se None, usa diretório padrão do sistema operacional
         """
         if config_dir is None:
-            appdata = os.getenv('APPDATA')
-            self.config_dir = Path(appdata) / 'TermografiaApp'
+            self.config_dir = self._get_default_config_dir()
         else:
             self.config_dir = Path(config_dir)
 
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config_file = self.config_dir / 'credentials.dat'
+        self.key_file = self.config_dir / '.key'
+
+        if not CRYPTOGRAPHY_AVAILABLE:
+            raise SecurityError(
+                "A biblioteca 'cryptography' não está instalada. "
+                "Execute: pip install cryptography"
+            )
+
+        # Inicializa ou carrega a chave de criptografia
+        self._cipher = self._get_or_create_cipher()
+
+    def _get_default_config_dir(self) -> Path:
+        """
+        Retorna o diretório padrão de configuração baseado no sistema operacional.
+
+        Returns:
+            Path para diretório de configuração
+        """
+        system = platform.system()
+
+        if system == 'Windows':
+            # Windows: %APPDATA%/TermografiaApp
+            appdata = os.getenv('APPDATA')
+            if appdata:
+                return Path(appdata) / 'TermografiaApp'
+            return Path.home() / 'AppData' / 'Roaming' / 'TermografiaApp'
+
+        elif system == 'Darwin':  # macOS
+            # macOS: ~/Library/Application Support/TermografiaApp
+            return Path.home() / 'Library' / 'Application Support' / 'TermografiaApp'
+
+        else:  # Linux e outros Unix
+            # Linux: ~/.config/termografia
+            xdg_config = os.getenv('XDG_CONFIG_HOME')
+            if xdg_config:
+                return Path(xdg_config) / 'termografia'
+            return Path.home() / '.config' / 'termografia'
+
+    def _get_machine_id(self) -> bytes:
+        """
+        Gera um identificador único da máquina para usar como salt.
+
+        Returns:
+            Bytes com identificador da máquina
+        """
+        system = platform.system()
+
+        # Usa informações da máquina como base para o salt
+        machine_info = f"{platform.node()}-{system}-{os.getlogin() if hasattr(os, 'getlogin') else 'user'}"
+
+        return machine_info.encode('utf-8')
+
+    def _derive_key(self) -> bytes:
+        """
+        Deriva uma chave de criptografia baseada em informações da máquina.
+
+        Returns:
+            Chave de 32 bytes para Fernet
+        """
+        # Usa salt baseado na máquina
+        salt = self._get_machine_id()
+
+        # Password fixa (combinada com salt único por máquina)
+        password = b"TermografiaApp-2024-Secure-Key"
+
+        # Deriva chave usando PBKDF2
+        kdf = PBKDF2(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(password))
+        return key
+
+    def _get_or_create_cipher(self) -> Fernet:
+        """
+        Obtém ou cria a cifra Fernet.
+
+        Returns:
+            Instância de Fernet para criptografia
+        """
+        # Deriva chave baseada na máquina
+        key = self._derive_key()
+
+        # Salva hash da chave para validação futura
+        from cryptography.hazmat.backends import default_backend
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(key)
+        key_hash = base64.b64encode(digest.finalize()).decode()
+
+        if self.key_file.exists():
+            # Valida se a chave é a mesma
+            with open(self.key_file, 'r') as f:
+                stored_hash = f.read().strip()
+
+            if stored_hash != key_hash:
+                raise SecurityError(
+                    "Chave de criptografia não corresponde. "
+                    "Os dados podem ter sido criados em outra máquina."
+                )
+        else:
+            # Salva hash da chave
+            with open(self.key_file, 'w') as f:
+                f.write(key_hash)
+
+        return Fernet(key)
 
     def encrypt_data(self, data: str) -> str:
         """
-        Criptografa dados usando DPAPI do Windows.
+        Criptografa dados.
 
         Args:
             data: String a ser criptografada
@@ -43,22 +157,14 @@ class SecurityManager:
         """
         try:
             data_bytes = data.encode('utf-8')
-            encrypted_bytes = win32crypt.CryptProtectData(
-                data_bytes,
-                'TermografiaApp',  # Descrição
-                None,  # Entropy opcional
-                None,  # Reservado
-                None,  # Prompt struct
-                0      # Flags
-            )
-            # Retorna em base64 para facilitar armazenamento
-            return base64.b64encode(encrypted_bytes).decode('utf-8')
+            encrypted_bytes = self._cipher.encrypt(data_bytes)
+            return encrypted_bytes.decode('utf-8')
         except Exception as e:
             raise SecurityError(f"Erro ao criptografar dados: {e}")
 
     def decrypt_data(self, encrypted_data: str) -> str:
         """
-        Descriptografa dados usando DPAPI do Windows.
+        Descriptografa dados.
 
         Args:
             encrypted_data: String em base64 com dados criptografados
@@ -67,16 +173,9 @@ class SecurityManager:
             String descriptografada
         """
         try:
-            encrypted_bytes = base64.b64decode(encrypted_data.encode('utf-8'))
-            decrypted_bytes = win32crypt.CryptUnprotectData(
-                encrypted_bytes,
-                None,  # Entropy opcional
-                None,  # Reservado
-                None,  # Prompt struct
-                0      # Flags
-            )
-            # CryptUnprotectData retorna (description, data)
-            return decrypted_bytes[1].decode('utf-8')
+            encrypted_bytes = encrypted_data.encode('utf-8')
+            decrypted_bytes = self._cipher.decrypt(encrypted_bytes)
+            return decrypted_bytes.decode('utf-8')
         except Exception as e:
             raise SecurityError(f"Erro ao descriptografar dados: {e}")
 
@@ -90,7 +189,8 @@ class SecurityManager:
         try:
             encrypted_key = self.encrypt_data(api_key)
             config = {
-                'anthropic_api_key': encrypted_key
+                'anthropic_api_key': encrypted_key,
+                'platform': platform.system()
             }
 
             with open(self.config_file, 'w') as f:
@@ -167,12 +267,14 @@ def get_security_manager() -> SecurityManager:
 if __name__ == '__main__':
     # Exemplo de uso
     print("=== Teste do SecurityManager ===\n")
+    print(f"Sistema operacional: {platform.system()}")
 
     sm = SecurityManager()
+    print(f"Diretório de config: {sm.config_dir}")
 
     # Teste de criptografia/descriptografia
     test_data = "sk-ant-api03-test-key-123456"
-    print(f"Dados originais: {test_data}")
+    print(f"\nDados originais: {test_data}")
 
     encrypted = sm.encrypt_data(test_data)
     print(f"Dados criptografados: {encrypted[:50]}...")

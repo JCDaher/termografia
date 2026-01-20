@@ -1,6 +1,6 @@
-﻿# Termografia Médica - Sistema Completo
+# Termografia Médica - Sistema Completo
 
-Aplicativo Windows desktop profissional para análise de imagens termográficas FLIR radiométricas com inteligência artificial.
+Aplicativo desktop **multiplataforma** (Windows, macOS, Linux) profissional para análise de imagens termográficas FLIR radiométricas com inteligência artificial.
 
 ## 🚀 Funcionalidades - FASE 2 Completa
 
@@ -83,11 +83,18 @@ Aplicativo Windows desktop profissional para análise de imagens termográficas 
 - `Ctrl+Q` - Sair
 
 ### 🔐 Segurança
-- ✅ Criptografia de API keys com DPAPI do Windows
-- ✅ Armazenamento seguro em %APPDATA%
+- ✅ Criptografia multiplataforma com Fernet (AES-128)
+- ✅ Derivação de chave PBKDF2 (100.000 iterações)
+- ✅ Salt único por máquina
+- ✅ Armazenamento seguro por SO:
+  - Windows: `%APPDATA%/TermografiaApp`
+  - macOS: `~/Library/Application Support/TermografiaApp`
+  - Linux: `~/.config/termografia`
 - ✅ Nenhuma credencial em texto plano
 
 ## 💻 Instalação
+
+### Windows
 
 ```bash
 # Clonar repositório
@@ -103,6 +110,37 @@ pip install -r requirements.txt
 
 # Executar
 python main.py
+```
+
+### macOS
+
+```bash
+# Clonar repositório
+git clone https://github.com/JCDaher/termografia.git
+cd termografia
+
+# Executar setup automático
+chmod +x setup_macos.sh
+./setup_macos.sh
+
+# Executar aplicativo
+chmod +x run_termografia.command
+./run_termografia.command
+```
+
+### Linux
+
+```bash
+# Clonar repositório
+git clone https://github.com/JCDaher/termografia.git
+cd termografia
+
+# Executar setup automático
+chmod +x setup_linux.sh
+./setup_linux.sh
+
+# Executar aplicativo
+./run_termografia.sh
 ```
 
 ## 🎯 Início Rápido
@@ -190,17 +228,22 @@ termografia/
 ## 🛠️ Tecnologias
 
 - **Python 3.11+**
-- **PyQt6** - Interface gráfica moderna
+- **PyQt6** - Interface gráfica moderna e multiplataforma
 - **OpenCV** - Processamento de imagens
 - **NumPy** - Computação numérica
 - **Anthropic API** - Claude AI para laudos
 - **SQLite** - Banco de dados local
 - **ReportLab** - Geração de PDFs
-- **win32crypt** - Criptografia DPAPI Windows
+- **Cryptography** - Criptografia Fernet multiplataforma (AES-128)
 
 ## 📊 Requisitos do Sistema
 
-- Windows 10/11
+### Sistemas Operacionais Suportados
+- ✅ Windows 10/11
+- ✅ macOS 11 (Big Sur) ou superior
+- ✅ Linux (Ubuntu 20.04+, Fedora 35+, Debian 11+)
+
+### Requisitos Mínimos
 - Python 3.11 ou superior
 - 4GB RAM mínimo (8GB recomendado)
 - 500MB espaço em disco
@@ -234,13 +277,39 @@ termografia/
 - Logs em: `logs/termografia.log`
 - Banco de dados em: `data/termografia.db`
 
-## 🆘 Suporte
+## 🆘 Suporte e Troubleshooting
+
+### Problemas Comuns
+
+#### macOS: "Cannot open because developer cannot be verified"
+```bash
+# Remover quarentena do arquivo
+xattr -d com.apple.quarantine run_termografia.command
+
+# OU abra com Ctrl+Click > Abrir
+```
+
+#### Linux: Missing Qt platform plugin
+```bash
+# Ubuntu/Debian
+sudo apt install python3-pyqt6 libxcb-xinerama0
+
+# Fedora
+sudo dnf install python3-qt6
+```
+
+#### Windows: DLL load failed
+Instale Visual C++ Redistributable:
+https://aka.ms/vs/17/release/vc_redist.x64.exe
+
+### Suporte Geral
 
 Em caso de problemas:
 1. Verifique `logs/termografia.log`
 2. Certifique-se que API key está configurada
 3. Confirme que todas dependências estão instaladas
-4. Abra um issue no GitHub
+4. Para macOS/Linux: Verifique permissões de execução (`chmod +x`)
+5. Abra um issue no GitHub
 
 ## 📝 Licença
 
