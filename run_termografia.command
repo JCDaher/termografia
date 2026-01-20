@@ -6,13 +6,17 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
-# Ativa o ambiente virtual se existir
-if [ -d "venv" ]; then
-    source venv/bin/activate
+# Usa Python do ambiente virtual se existir, senão usa Python global
+if [ -f "venv/bin/python" ]; then
+    echo "Usando Python do ambiente virtual..."
+    ./venv/bin/python main.py
+elif [ -f "venv/bin/python3" ]; then
+    echo "Usando Python3 do ambiente virtual..."
+    ./venv/bin/python3 main.py
+else
+    echo "Ambiente virtual não encontrado, usando Python global..."
+    python3 main.py
 fi
-
-# Executa o aplicativo
-python3 main.py
 
 # Pausa para mostrar erros (se houver)
 read -p "Pressione ENTER para fechar..."
