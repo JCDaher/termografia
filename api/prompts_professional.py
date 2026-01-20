@@ -88,6 +88,42 @@ A interpretação do resultado deste exame complementar e a conclusão diagnóst
 - Assimetrias podem indicar: radiculopatia, processo inflamatório, alterações vasculares, SDRC
 - Sempre recomendar correlação clínica
 - Indicar exames complementares quando apropriado
+
+### Padrões Termográficos de Fibromialgia:
+
+A fibromialgia apresenta padrões termográficos característicos que devem ser identificados quando presentes:
+
+**1. PADRÃO PERIORBICULAR**
+- Alterações térmicas características na região ao redor dos olhos
+- Pode apresentar hiper ou hiporradiação periocular
+
+**2. TERMORREGULAÇÃO DISFUNCIONAL**
+- Hiporradiação de extremidades (mãos e pés mais frios que o esperado)
+- Contraste térmico entre extremidades e tronco
+- Temperaturas distais consistentemente reduzidas bilateralmente
+
+**3. TENDER POINTS (Pontos de Dor)**
+- Assimetrias térmicas localizadas correspondentes aos 18 tender points clássicos
+- Podem manifestar-se como áreas de hiper-radiação ou hiporradiação
+- Padrões neurovasculares sugestivos de sensibilização central
+
+**4. PADRÃO CERVICAL SUPERIOR**
+- Hiporradiação (frio) em região cervical superior (C7-T1-T2)
+- Áreas frias nas junções articulares
+- Pode apresentar padrão em "colar frio"
+
+**5. CARACTERÍSTICAS GERAIS**
+- Múltiplas áreas de assimetria térmica sem padrão dermatomérico claro
+- Distribuição bilateral mas não necessariamente simétrica
+- Padrões térmicos complexos e multifocais
+- Alterações que não seguem território nervoso específico
+
+**IMPORTANTE:**
+- A termografia é um COMPLEMENTO diagnóstico, não substitui avaliação clínica
+- Alta especificidade mas sensibilidade variável
+- Sempre correlacionar com critérios clínicos do ACR (American College of Rheumatology)
+- Sugerir avaliação reumatológica quando padrão sugestivo for identificado
+- Mencionar que achados termográficos suportam mas não confirmam diagnóstico
 """
 
 
@@ -174,6 +210,24 @@ Processamento em lote de {total_images} imagens termográficas FLIR com análise
 4. Na seção "CONCLUSÃO", faça uma síntese objetiva dos achados
 5. Se houver assimetrias severas ou moderadas, mencione em "Neurológica" da IMPRESSÃO DIAGNÓSTICA
 6. Mantenha todas as seções padrão do template EXATAMENTE como estão
+
+## ANÁLISE DE PADRÕES DE FIBROMIALGIA
+IMPORTANTE: Analise os dados termográficos procurando por padrões sugestivos de fibromialgia:
+
+7. **Identifique se há:**
+   - Hiporradiação bilateral de extremidades (temperaturas distais consistentemente baixas)
+   - Padrão cervical superior frio (região C7-T2)
+   - Múltiplas áreas de assimetria sem padrão dermatomérico claro
+   - Distribuição bilateral de alterações térmicas
+
+8. **Se padrão sugestivo de fibromialgia for identificado:**
+   - Mencione na seção "IMPRESSÃO DIAGNÓSTICA" > "Musculoesquelética":
+     "Padrão termográfico com características sugestivas de fibromialgia: [descrever achados específicos]. Sugerimos correlação com avaliação reumatológica e critérios clínicos do ACR."
+   - Na "CONCLUSÃO", mencione: "Achados termográficos compatíveis com padrão de fibromialgia, recomenda-se correlação clínica."
+
+9. **NUNCA afirme diagnóstico definitivo:**
+   - Use: "padrão sugestivo", "compatível com", "achados que podem estar relacionados"
+   - Sempre recomende correlação clínica e avaliação especializada
 """
 
     else:
@@ -214,6 +268,24 @@ Processamento em lote de {total_images} imagens termográficas FLIR com análise
 3. Na seção "RESULTADOS DO EXAME", detalhe as temperaturas medidas
 4. Na seção "CONCLUSÃO", faça uma síntese objetiva dos achados
 5. Mantenha todas as seções padrão do template EXATAMENTE como estão
+
+## ANÁLISE DE PADRÕES DE FIBROMIALGIA
+IMPORTANTE: Analise os dados termográficos procurando por padrões sugestivos de fibromialgia:
+
+6. **Identifique se há:**
+   - Hiporradiação bilateral de extremidades (temperaturas distais consistentemente baixas)
+   - Padrão cervical superior frio (região C7-T2)
+   - Múltiplas áreas de assimetria sem padrão dermatomérico claro
+   - Distribuição bilateral de alterações térmicas
+
+7. **Se padrão sugestivo de fibromialgia for identificado:**
+   - Mencione na seção "IMPRESSÃO DIAGNÓSTICA" > "Musculoesquelética":
+     "Padrão termográfico com características sugestivas de fibromialgia: [descrever achados específicos]. Sugerimos correlação com avaliação reumatológica e critérios clínicos do ACR."
+   - Na "CONCLUSÃO", mencione: "Achados termográficos compatíveis com padrão de fibromialgia, recomenda-se correlação clínica."
+
+8. **NUNCA afirme diagnóstico definitivo:**
+   - Use: "padrão sugestivo", "compatível com", "achados que podem estar relacionados"
+   - Sempre recomende correlação clínica e avaliação especializada
 """
 
     return prompt
