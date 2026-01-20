@@ -21,6 +21,7 @@ from typing import Optional, Dict, Any, List
 
 from core.flir_processor import FLIRProcessor
 from core.thermal_analyzer import ThermalAnalyzer
+from core.hotspot_detector import HotspotDetector
 from database.db_manager import get_db_manager
 from api.claude_client import get_claude_client, has_api_key, configure_api_key
 from reports.pdf_generator import PDFGenerator
@@ -130,6 +131,13 @@ class MainWindow(QMainWindow):
         self.btn_process_all.clicked.connect(self.process_all_images)
         self.btn_process_all.setEnabled(False)
         toolbar.addWidget(self.btn_process_all)
+
+        # Botão processar todas com detecção automática
+        self.btn_process_all_auto = QPushButton("🔥 Processar Todas (Auto)")
+        self.btn_process_all_auto.clicked.connect(self.process_all_images_auto)
+        self.btn_process_all_auto.setEnabled(False)
+        self.btn_process_all_auto.setToolTip("Detecta automaticamente pontos quentes sem precisar desenhar ROIs")
+        toolbar.addWidget(self.btn_process_all_auto)
 
         # Botão gerar laudo
         self.btn_generate_report = QPushButton("📄 Gerar Laudo")
@@ -633,6 +641,7 @@ class MainWindow(QMainWindow):
                 self.btn_toggle_heatmap.setEnabled(True)
                 # Habilita processamento em lote se houver múltiplas imagens
                 self.btn_process_all.setEnabled(len(self.loaded_images) > 1)
+                self.btn_process_all_auto.setEnabled(len(self.loaded_images) > 1)
                 self.update_navigation_buttons()
 
             # Habilita importação
@@ -746,6 +755,7 @@ class MainWindow(QMainWindow):
                 self.btn_toggle_heatmap.setEnabled(True)
                 # Habilita processamento em lote se houver múltiplas imagens
                 self.btn_process_all.setEnabled(len(self.loaded_images) > 1)
+                self.btn_process_all_auto.setEnabled(len(self.loaded_images) > 1)
                 self.update_navigation_buttons()
 
                 # Mensagem de sucesso
@@ -1220,6 +1230,199 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
         except Exception as e:
             logger.error(f"Erro no processamento em lote: {e}", exc_info=True)
             QMessageBox.critical(self, "Erro", f"Erro no processamento em lote: {e}")
+
+    def process_all_images_auto(self):
+        """
+        Processa todas as imagens em lote com detecção automática de pontos quentes.
+        Não requer desenho manual de ROIs.
+        """
+        if not self.loaded_images or len(self.loaded_images) < 2:
+            QMessageBox.warning(self, "Aviso", "Carregue múltiplas imagens para processamento em lote")
+            return
+
+        try:
+            # Pergunta configurações de detecção
+            reply = QMessageBox.question(
+                self,
+                "Processamento Automático",
+                f"🔥 DETECÇÃO AUTOMÁTICA DE PONTOS QUENTES\n\n"
+                f"Você tem {len(self.loaded_images)} imagens carregadas.\n\n"
+                f"Este modo detecta automaticamente as regiões mais quentes\n"
+                f"em cada imagem SEM precisar desenhar ROIs manualmente.\n\n"
+                f"O algoritmo vai:\n"
+                f"• Identificar as 2 regiões mais quentes automaticamente\n"
+                f"• Classificar como esquerda/direita pela posição\n"
+                f"• Calcular temperaturas e assimetria\n\n"
+                f"Continuar?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.No:
+                return
+
+            # Criar detector de hotspots
+            hotspot_detector = HotspotDetector(
+                percentile_threshold=80.0,  # Top 20% mais quente
+                min_region_size=100,        # Mínimo 100 pixels
+                max_regions=2               # Detectar 2 regiões (esq/dir)
+            )
+
+            # Cria dialog de progresso
+            progress = QProgressDialog(
+                "Detectando pontos quentes automaticamente...",
+                "Cancelar",
+                0,
+                len(self.loaded_images),
+                self
+            )
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+
+            # Resultados consolidados
+            all_results = []
+            successful = 0
+            failed = 0
+
+            # Processa cada imagem
+            for idx, image_data in enumerate(self.loaded_images):
+                if progress.wasCanceled():
+                    break
+
+                progress.setValue(idx)
+                image_name = Path(image_data.get('image_path', f'Imagem {idx+1}')).name
+                progress.setLabelText(f"Processando {image_name}...\n({idx + 1}/{len(self.loaded_images)})")
+
+                try:
+                    thermal_data = image_data.get('thermal_data')
+
+                    if thermal_data is None:
+                        logger.warning(f"Imagem {idx+1}: Sem dados térmicos")
+                        failed += 1
+                        continue
+
+                    # Detectar hotspots automaticamente
+                    logger.info(f"\n{'='*60}")
+                    logger.info(f"Imagem {idx+1}: {image_name}")
+
+                    temp_left, temp_right = hotspot_detector.detect_left_right_hotspots(
+                        thermal_data,
+                        method='percentile'
+                    )
+
+                    # Se detectou ambas as regiões
+                    if temp_left is not None and temp_right is not None:
+                        # Calcular assimetria
+                        result = self.thermal_analyzer.analyze_asymmetry(
+                            temp_left,
+                            temp_right,
+                            self.combo_dermatome.currentText()
+                        )
+
+                        all_results.append({
+                            'image_index': idx + 1,
+                            'image_name': image_name,
+                            'left_temp': temp_left,
+                            'right_temp': temp_right,
+                            'delta_t': result.delta_t,
+                            'classification': result.classification,
+                            'clinical_significance': result.clinical_significance,
+                            'method': 'auto_hotspot'
+                        })
+                        successful += 1
+                        logger.info(f"  ✅ Sucesso: Esq={temp_left:.2f}°C, Dir={temp_right:.2f}°C, ΔT={result.delta_t:.2f}°C")
+                    else:
+                        # Não conseguiu detectar ambas as regiões
+                        logger.warning(f"  ❌ Não foi possível detectar 2 regiões quentes (esquerda={temp_left}, direita={temp_right})")
+                        failed += 1
+
+                except Exception as e:
+                    logger.error(f"Erro ao processar imagem {idx+1}: {e}", exc_info=True)
+                    failed += 1
+
+            progress.setValue(len(self.loaded_images))
+
+            # Mostra resultados consolidados
+            if all_results:
+                result_summary = f"✅ Processamento Automático Concluído!\n\n"
+                result_summary += f"🔥 Detecção automática de pontos quentes\n\n"
+                result_summary += f"Total de imagens: {len(self.loaded_images)}\n"
+                result_summary += f"Processadas com sucesso: {successful}\n"
+                result_summary += f"Falhas: {failed}\n\n"
+                result_summary += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+                # Estatísticas gerais
+                avg_delta_t = np.mean([r['delta_t'] for r in all_results])
+                max_delta_t = np.max([r['delta_t'] for r in all_results])
+                min_delta_t = np.min([r['delta_t'] for r in all_results])
+                avg_left = np.mean([r['left_temp'] for r in all_results])
+                avg_right = np.mean([r['right_temp'] for r in all_results])
+
+                result_summary += f"📊 Estatísticas Gerais:\n"
+                result_summary += f"Temp. Média Esquerda: {avg_left:.2f}°C\n"
+                result_summary += f"Temp. Média Direita: {avg_right:.2f}°C\n"
+                result_summary += f"ΔT Médio: {avg_delta_t:.2f}°C\n"
+                result_summary += f"ΔT Máximo: {max_delta_t:.2f}°C\n"
+                result_summary += f"ΔT Mínimo: {min_delta_t:.2f}°C\n\n"
+
+                # Distribuição de classificações
+                classifications = {}
+                for r in all_results:
+                    cls = r['classification']
+                    classifications[cls] = classifications.get(cls, 0) + 1
+
+                result_summary += f"📈 Distribuição de Classificações:\n"
+                for cls, count in sorted(classifications.items(), key=lambda x: -x[1]):
+                    percentage = (count / len(all_results)) * 100
+                    result_summary += f"• {cls}: {count} ({percentage:.1f}%)\n"
+
+                # Detalhes de algumas imagens
+                result_summary += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                result_summary += f"\n📋 Primeiras 5 imagens:\n"
+                for i, r in enumerate(all_results[:5]):
+                    result_summary += f"\n{i+1}. {r['image_name']}\n"
+                    result_summary += f"   Esq: {r['left_temp']:.2f}°C | Dir: {r['right_temp']:.2f}°C\n"
+                    result_summary += f"   ΔT: {r['delta_t']:.2f}°C - {r['classification']}\n"
+
+                if len(all_results) > 5:
+                    result_summary += f"\n... e mais {len(all_results) - 5} imagem(ns)\n"
+
+                result_summary += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                result_summary += f"\n💡 Próximo passo: Clique em 'Gerar Laudo' para\n"
+                result_summary += f"criar um relatório consolidado!"
+
+                # Salva resultados para usar no laudo
+                self.batch_results = all_results
+
+                # Mostra resumo
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Processamento Automático")
+                msg_box.setText(result_summary)
+                msg_box.setIcon(QMessageBox.Icon.Information)
+                msg_box.exec()
+
+                # Habilita geração de laudo
+                self.btn_generate_report.setEnabled(True)
+                self.statusBar().showMessage(
+                    f"Processamento automático concluído: {successful}/{len(self.loaded_images)}"
+                )
+
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Processamento Automático",
+                    f"❌ Nenhuma imagem foi processada com sucesso.\n\n"
+                    f"Possíveis causas:\n"
+                    f"• Imagens sem dados térmicos válidos\n"
+                    f"• Regiões quentes muito pequenas (< 100 pixels)\n"
+                    f"• Distribuição de temperatura muito uniforme\n\n"
+                    f"Tente:\n"
+                    f"• Usar o modo manual (Processar Todas)\n"
+                    f"• Verificar se as imagens são FLIR com dados térmicos"
+                )
+
+        except Exception as e:
+            logger.error(f"Erro no processamento automático: {e}", exc_info=True)
+            QMessageBox.critical(self, "Erro", f"Erro no processamento automático:\n\n{e}")
 
     def analyze_asymmetry(self):
         """Analisa assimetria térmica."""
