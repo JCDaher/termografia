@@ -870,25 +870,35 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
     def process_image(self):
         """Processa imagem térmica e ROIs automaticamente."""
         if not self.current_image_data:
-            QMessageBox.warning(self, "Erro", "Nenhuma imagem carregada")
+            QMessageBox.warning(self, "Erro", "Nenhuma imagem carregada.\n\nImporte uma imagem FLIR primeiro.")
             return
 
         try:
             self.statusBar().showMessage("Processando imagem e ROIs...")
+            logger.info("=== Iniciando processamento de imagem ===")
 
             # Se houver ROIs salvas, processar
             if self.current_rois and len(self.current_rois) > 0:
+                logger.info(f"Processando {len(self.current_rois)} ROIs")
+
                 thermal_data = self.current_image_data.get('thermal_data')
 
                 if thermal_data is None:
+                    logger.warning("thermal_data é None - não é possível processar ROIs")
                     QMessageBox.warning(self, "Aviso",
-                        "Dados térmicos não disponíveis para processar ROIs.\n"
-                        "As estatísticas gerais da imagem foram calculadas.")
-                    self.btn_generate_report.setEnabled(True)
+                        "Dados térmicos não disponíveis para processar ROIs.\n\n"
+                        "A imagem pode não conter informações de temperatura incorporadas.\n"
+                        "Tente importar uma imagem FLIR com dados térmicos.")
+                    self.btn_generate_report.setEnabled(False)
+                    self.statusBar().showMessage("Erro: Sem dados térmicos")
                     return
+
+                logger.info(f"Dados térmicos: shape={thermal_data.shape}, dtype={thermal_data.dtype}")
 
                 # Calcular temperaturas de cada ROI
                 roi_temps = {}
+                import cv2
+
                 for roi in self.current_rois:
                     name = roi['name']
                     # ROIs vêm com 'coordinates' do ROI Editor
@@ -898,8 +908,9 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                         logger.warning(f"ROI '{name}' não tem coordenadas válidas")
                         continue
 
+                    logger.info(f"Processando ROI '{name}' com {len(points)} pontos")
+
                     # Criar máscara para o ROI
-                    import cv2
                     mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
                     pts = np.array(points, dtype=np.int32)
                     cv2.fillPoly(mask, [pts], 255)
@@ -909,7 +920,9 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                     if len(roi_region) > 0:
                         avg_temp = np.mean(roi_region)
                         roi_temps[name] = avg_temp
-                        logger.info(f"ROI '{name}': {avg_temp:.2f}°C")
+                        logger.info(f"  ROI '{name}': {avg_temp:.2f}°C ({len(roi_region)} pixels)")
+                    else:
+                        logger.warning(f"  ROI '{name}' não capturou nenhum pixel - pode estar fora da imagem")
 
                 # Tentar identificar ROIs esquerda/direita automaticamente
                 left_temp = None
@@ -1548,59 +1561,99 @@ Significado Clínico:
         Args:
             rois: Lista de ROIs desenhadas
         """
-        self.current_rois = rois
-        self.statusBar().showMessage(f"{len(rois)} ROI(s) criada(s)")
+        try:
+            self.current_rois = rois
+            self.statusBar().showMessage(f"{len(rois)} ROI(s) criada(s)")
 
-        # Calcula temperaturas automaticamente se houver dados térmicos
-        if self.current_image_data and 'thermal_data' in self.current_image_data:
+            logger.info(f"ROIs salvas: {len(rois)}")
+            for roi in rois:
+                logger.info(f"  - {roi['name']}: {len(roi.get('coordinates', roi.get('points', [])))} pontos")
+
+            # Calcula temperaturas automaticamente se houver dados térmicos
+            if not self.current_image_data:
+                logger.warning("Nenhuma imagem carregada (current_image_data é None)")
+                roi_names = "\n".join([f"• {roi['name']}" for roi in rois])
+                QMessageBox.warning(self, "ROIs Salvas",
+                    f"⚠️ {len(rois)} ROI(s) criadas!\n\n"
+                    f"ROIs criadas:\n{roi_names}\n\n"
+                    f"ATENÇÃO: Nenhuma imagem está carregada.\n"
+                    f"Importe uma imagem FLIR primeiro.")
+                return
+
+            if 'thermal_data' not in self.current_image_data:
+                logger.warning("Imagem não contém dados térmicos (thermal_data)")
+                roi_names = "\n".join([f"• {roi['name']}" for roi in rois])
+                QMessageBox.warning(self, "ROIs Salvas",
+                    f"⚠️ {len(rois)} ROI(s) criadas!\n\n"
+                    f"ROIs criadas:\n{roi_names}\n\n"
+                    f"ATENÇÃO: Esta imagem não possui dados térmicos.\n"
+                    f"Importe uma imagem FLIR com dados de temperatura.")
+                return
+
             thermal_data = self.current_image_data['thermal_data']
 
-            if thermal_data is not None:
-                roi_temps_info = []
+            if thermal_data is None:
+                logger.warning("thermal_data é None")
+                roi_names = "\n".join([f"• {roi['name']}" for roi in rois])
+                QMessageBox.warning(self, "ROIs Salvas",
+                    f"⚠️ {len(rois)} ROI(s) criadas!\n\n"
+                    f"ROIs criadas:\n{roi_names}\n\n"
+                    f"ATENÇÃO: Dados térmicos não disponíveis.\n"
+                    f"Clique em 'Processar' para tentar calcular.")
+                return
 
-                for roi in rois:
-                    name = roi['name']
-                    points = roi.get('coordinates', roi.get('points', []))
+            logger.info(f"Dados térmicos disponíveis: shape={thermal_data.shape}, dtype={thermal_data.dtype}")
 
-                    if not points:
-                        continue
+            roi_temps_info = []
+            import cv2
 
-                    # Calcular temperatura da ROI
-                    import cv2
-                    mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
-                    pts = np.array(points, dtype=np.int32)
-                    cv2.fillPoly(mask, [pts], 255)
+            for roi in rois:
+                name = roi['name']
+                points = roi.get('coordinates', roi.get('points', []))
 
-                    roi_region = thermal_data[mask == 255]
-                    if len(roi_region) > 0:
-                        avg_temp = np.mean(roi_region)
-                        roi_temps_info.append(f"• {name}: {avg_temp:.2f}°C")
+                if not points:
+                    logger.warning(f"ROI '{name}' não tem coordenadas")
+                    continue
 
-                # Mostra temperaturas calculadas
-                if roi_temps_info:
-                    temps_text = "\n".join(roi_temps_info)
-                    QMessageBox.information(self, "ROIs Salvas",
-                        f"✅ {len(rois)} ROI(s) criadas e processadas!\n\n"
-                        f"📊 Temperaturas calculadas:\n{temps_text}\n\n"
-                        f"⚙️ Próximo passo: Clique em 'Processar' para preencher\n"
-                        f"automaticamente os campos e analisar assimetria.")
+                logger.info(f"Processando ROI '{name}' com {len(points)} pontos")
+
+                # Calcular temperatura da ROI
+                mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
+                pts = np.array(points, dtype=np.int32)
+                cv2.fillPoly(mask, [pts], 255)
+
+                roi_region = thermal_data[mask == 255]
+                if len(roi_region) > 0:
+                    avg_temp = np.mean(roi_region)
+                    roi_temps_info.append(f"• {name}: {avg_temp:.2f}°C")
+                    logger.info(f"  Temperatura calculada: {avg_temp:.2f}°C (pixels: {len(roi_region)})")
                 else:
-                    roi_names = "\n".join([f"• {roi['name']}" for roi in rois])
-                    QMessageBox.information(self, "ROIs Salvas",
-                        f"{len(rois)} ROI(s) criadas!\n\n"
-                        f"ROIs criadas:\n{roi_names}\n\n"
-                        f"⚙️ Clique em 'Processar' para calcular temperaturas.")
+                    logger.warning(f"  ROI '{name}' não capturou nenhum pixel")
+
+            # Mostra temperaturas calculadas
+            if roi_temps_info:
+                temps_text = "\n".join(roi_temps_info)
+                QMessageBox.information(self, "ROIs Salvas",
+                    f"✅ {len(rois)} ROI(s) criadas e processadas!\n\n"
+                    f"📊 Temperaturas calculadas:\n{temps_text}\n\n"
+                    f"⚙️ Próximo passo: Clique em 'Processar' para preencher\n"
+                    f"automaticamente os campos e analisar assimetria.")
             else:
                 roi_names = "\n".join([f"• {roi['name']}" for roi in rois])
-                QMessageBox.information(self, "ROIs Salvas",
-                    f"{len(rois)} ROI(s) criadas!\n\n"
+                QMessageBox.warning(self, "ROIs Salvas",
+                    f"⚠️ {len(rois)} ROI(s) criadas mas nenhuma temperatura foi calculada!\n\n"
                     f"ROIs criadas:\n{roi_names}\n\n"
-                    f"⚙️ Clique em 'Processar' para calcular temperaturas.")
-        else:
-            roi_names = "\n".join([f"• {roi['name']}" for roi in rois])
-            QMessageBox.information(self, "ROIs Salvas",
-                f"{len(rois)} ROI(s) criadas!\n\n"
-                f"ROIs criadas:\n{roi_names}")
+                    f"Possíveis causas:\n"
+                    f"• ROIs fora da área da imagem\n"
+                    f"• ROIs muito pequenas\n"
+                    f"• Coordenadas inválidas\n\n"
+                    f"Tente redesenhar as ROIs ou clique em 'Processar'.")
+
+        except Exception as e:
+            logger.error(f"Erro em on_rois_saved: {e}", exc_info=True)
+            QMessageBox.critical(self, "Erro",
+                f"Erro ao processar ROIs salvas:\n\n{str(e)}\n\n"
+                f"Verifique os logs para mais detalhes.")
 
     def show_about(self):
         """Mostra dialog sobre o aplicativo."""
