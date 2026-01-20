@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QLabel, QFileDialog, QTextEdit, QTabWidget, QGroupBox,
     QLineEdit, QComboBox, QSpinBox, QMessageBox, QProgressBar,
     QTableWidget, QTableWidgetItem, QSplitter, QFormLayout, QListWidget,
-    QMenu, QMenuBar
+    QMenu, QMenuBar, QProgressDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QAction
@@ -74,6 +74,7 @@ class MainWindow(QMainWindow):
         self.current_image_index = 0  # Índice da imagem atual
         self.current_rois = []  # ROIs desenhadas
         self.generated_report_text = ""  # Último laudo gerado
+        self.batch_results = []  # Resultados do processamento em lote
 
         self.init_ui()
         self.setup_menu()
@@ -119,10 +120,16 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_import)
 
         # Botão processar
-        self.btn_process = QPushButton("⚙️ Processar")
+        self.btn_process = QPushButton("⚙️ Processar Atual")
         self.btn_process.clicked.connect(self.process_image)
         self.btn_process.setEnabled(False)
         toolbar.addWidget(self.btn_process)
+
+        # Botão processar todas
+        self.btn_process_all = QPushButton("⚙️ Processar Todas")
+        self.btn_process_all.clicked.connect(self.process_all_images)
+        self.btn_process_all.setEnabled(False)
+        toolbar.addWidget(self.btn_process_all)
 
         # Botão gerar laudo
         self.btn_generate_report = QPushButton("📄 Gerar Laudo")
@@ -624,6 +631,8 @@ class MainWindow(QMainWindow):
                 self.lbl_image_count.setText(f"({len(self.loaded_images)})")
                 self.btn_process.setEnabled(True)
                 self.btn_toggle_heatmap.setEnabled(True)
+                # Habilita processamento em lote se houver múltiplas imagens
+                self.btn_process_all.setEnabled(len(self.loaded_images) > 1)
                 self.update_navigation_buttons()
 
             # Habilita importação
@@ -735,6 +744,8 @@ class MainWindow(QMainWindow):
                 # Habilita botões
                 self.btn_process.setEnabled(True)
                 self.btn_toggle_heatmap.setEnabled(True)
+                # Habilita processamento em lote se houver múltiplas imagens
+                self.btn_process_all.setEnabled(len(self.loaded_images) > 1)
                 self.update_navigation_buttons()
 
                 # Mensagem de sucesso
@@ -946,6 +957,187 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
         except Exception as e:
             logger.error(f"Erro ao processar imagem: {e}", exc_info=True)
             QMessageBox.critical(self, "Erro", f"Erro ao processar: {e}")
+
+    def process_all_images(self):
+        """Processa todas as imagens carregadas em lote."""
+        if not self.loaded_images or len(self.loaded_images) < 2:
+            QMessageBox.warning(self, "Aviso", "Carregue múltiplas imagens para processamento em lote")
+            return
+
+        try:
+            # Pergunta se quer usar as mesmas ROIs para todas as imagens
+            reply = QMessageBox.question(self, "Processamento em Lote",
+                f"Você tem {len(self.loaded_images)} imagens carregadas.\n\n"
+                f"Deseja usar as mesmas ROIs em todas as imagens?\n\n"
+                f"• SIM: As ROIs atuais serão aplicadas a todas\n"
+                f"• NÃO: Cada imagem processará suas próprias ROIs (se houver)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+
+            use_same_rois = (reply == QMessageBox.StandardButton.Yes)
+
+            # Se não há ROIs e usuário escolheu usar mesmas ROIs
+            if use_same_rois and not self.current_rois:
+                QMessageBox.warning(self, "Aviso",
+                    "Nenhuma ROI definida!\n\n"
+                    "Por favor:\n"
+                    "1. Abra o Editor de ROIs (Ferramentas > Editor de ROIs)\n"
+                    "2. Desenhe as ROIs\n"
+                    "3. Salve\n"
+                    "4. Execute 'Processar Todas' novamente")
+                return
+
+            # Cria dialog de progresso
+            progress = QProgressDialog("Processando imagens...", "Cancelar", 0, len(self.loaded_images), self)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+
+            # Salva ROIs de template se necessário
+            template_rois = self.current_rois.copy() if use_same_rois else None
+
+            # Resultados consolidados
+            all_results = []
+            successful = 0
+            failed = 0
+
+            # Processa cada imagem
+            for idx, image_data in enumerate(self.loaded_images):
+                if progress.wasCanceled():
+                    break
+
+                progress.setValue(idx)
+                progress.setLabelText(f"Processando imagem {idx + 1} de {len(self.loaded_images)}...")
+
+                try:
+                    # Se usar mesmas ROIs, aplicar template
+                    if use_same_rois:
+                        rois = template_rois
+                    else:
+                        # Usar ROIs específicas da imagem (se houver)
+                        rois = image_data.get('rois', [])
+
+                    # Processar ROIs se houver
+                    if rois:
+                        thermal_data = image_data.get('thermal_data')
+                        if thermal_data is not None:
+                            roi_temps = {}
+                            for roi in rois:
+                                name = roi['name']
+                                points = roi['points']
+
+                                # Criar máscara
+                                import cv2
+                                mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
+                                pts = np.array(points, dtype=np.int32)
+                                cv2.fillPoly(mask, [pts], 255)
+
+                                # Calcular temperatura média
+                                roi_region = thermal_data[mask == 255]
+                                if len(roi_region) > 0:
+                                    roi_temps[name] = np.mean(roi_region)
+
+                            # Tentar identificar esquerda/direita
+                            left_temp = None
+                            right_temp = None
+                            for name, temp in roi_temps.items():
+                                name_lower = name.lower()
+                                if 'esq' in name_lower or 'left' in name_lower or 'e' == name_lower[-1]:
+                                    left_temp = temp
+                                elif 'dir' in name_lower or 'right' in name_lower or 'd' == name_lower[-1]:
+                                    right_temp = temp
+
+                            # Se encontrou ambos, calcular assimetria
+                            if left_temp is not None and right_temp is not None:
+                                result = self.thermal_analyzer.analyze_asymmetry(
+                                    left_temp, right_temp,
+                                    self.combo_dermatome.currentText()
+                                )
+
+                                all_results.append({
+                                    'image_index': idx + 1,
+                                    'image_name': Path(image_data.get('image_path', f'Imagem {idx+1}')).name,
+                                    'left_temp': left_temp,
+                                    'right_temp': right_temp,
+                                    'delta_t': result.delta_t,
+                                    'classification': result.classification,
+                                    'clinical_significance': result.clinical_significance
+                                })
+                                successful += 1
+                            else:
+                                logger.warning(f"Imagem {idx+1}: Não foi possível identificar ROIs esquerda/direita")
+                                failed += 1
+                        else:
+                            logger.warning(f"Imagem {idx+1}: Sem dados térmicos")
+                            failed += 1
+                    else:
+                        logger.warning(f"Imagem {idx+1}: Sem ROIs")
+                        failed += 1
+
+                except Exception as e:
+                    logger.error(f"Erro ao processar imagem {idx+1}: {e}")
+                    failed += 1
+
+            progress.setValue(len(self.loaded_images))
+
+            # Mostra resultados consolidados
+            if all_results:
+                result_summary = f"✅ Processamento em Lote Concluído!\n\n"
+                result_summary += f"Total de imagens: {len(self.loaded_images)}\n"
+                result_summary += f"Processadas com sucesso: {successful}\n"
+                result_summary += f"Falhas: {failed}\n\n"
+                result_summary += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+                # Estatísticas gerais
+                avg_delta_t = np.mean([r['delta_t'] for r in all_results])
+                max_delta_t = np.max([r['delta_t'] for r in all_results])
+                min_delta_t = np.min([r['delta_t'] for r in all_results])
+
+                result_summary += f"📊 Estatísticas Gerais:\n"
+                result_summary += f"ΔT Médio: {avg_delta_t:.2f}°C\n"
+                result_summary += f"ΔT Máximo: {max_delta_t:.2f}°C\n"
+                result_summary += f"ΔT Mínimo: {min_delta_t:.2f}°C\n\n"
+
+                # Distribuição de classificações
+                classifications = {}
+                for r in all_results:
+                    cls = r['classification']
+                    classifications[cls] = classifications.get(cls, 0) + 1
+
+                result_summary += f"📈 Distribuição de Classificações:\n"
+                for cls, count in classifications.items():
+                    percentage = (count / len(all_results)) * 100
+                    result_summary += f"• {cls}: {count} ({percentage:.1f}%)\n"
+
+                result_summary += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                result_summary += f"\n💡 Próximo passo: Clique em 'Gerar Laudo' para\n"
+                result_summary += f"criar um relatório consolidado de todas as imagens!"
+
+                # Salva resultados para usar no laudo
+                self.batch_results = all_results
+
+                # Mostra resumo
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Processamento em Lote")
+                msg_box.setText(result_summary)
+                msg_box.setIcon(QMessageBox.Icon.Information)
+                msg_box.exec()
+
+                # Habilita geração de laudo
+                self.btn_generate_report.setEnabled(True)
+                self.statusBar().showMessage(f"Processamento em lote concluído: {successful}/{len(self.loaded_images)}")
+
+            else:
+                QMessageBox.warning(self, "Processamento em Lote",
+                    f"Nenhuma imagem foi processada com sucesso.\n\n"
+                    f"Certifique-se de que:\n"
+                    f"• As ROIs estão nomeadas como 'Esquerdo'/'Direito' ou 'Esq'/'Dir'\n"
+                    f"• As imagens têm dados térmicos válidos")
+
+        except Exception as e:
+            logger.error(f"Erro no processamento em lote: {e}", exc_info=True)
+            QMessageBox.critical(self, "Erro", f"Erro no processamento em lote: {e}")
 
     def analyze_asymmetry(self):
         """Analisa assimetria térmica."""
