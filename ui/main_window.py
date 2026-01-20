@@ -895,6 +895,21 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
 
                 logger.info(f"Dados térmicos: shape={thermal_data.shape}, dtype={thermal_data.dtype}")
 
+                # Pega o tamanho da imagem visível usada para desenhar ROIs
+                visible_image = self.current_image_data.get('visible_image')
+                if visible_image is not None:
+                    visible_h, visible_w = visible_image.shape[:2]
+                    thermal_h, thermal_w = thermal_data.shape[:2]
+                    logger.info(f"Imagem visível: {visible_w}x{visible_h}, Dados térmicos: {thermal_w}x{thermal_h}")
+
+                    # Calcula fatores de escala
+                    scale_x = thermal_w / visible_w
+                    scale_y = thermal_h / visible_h
+                    logger.info(f"Fatores de escala: x={scale_x:.4f}, y={scale_y:.4f}")
+                else:
+                    scale_x = scale_y = 1.0
+                    logger.warning("Imagem visível não disponível, usando escala 1:1")
+
                 # Calcular temperaturas de cada ROI
                 roi_temps = {}
                 import cv2
@@ -910,9 +925,13 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
 
                     logger.info(f"Processando ROI '{name}' com {len(points)} pontos")
 
+                    # Escala as coordenadas para o tamanho dos dados térmicos
+                    scaled_points = [(int(x * scale_x), int(y * scale_y)) for x, y in points]
+                    logger.info(f"  Coords originais: {points[0]}, Escaladas: {scaled_points[0]}")
+
                     # Criar máscara para o ROI
                     mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
-                    pts = np.array(points, dtype=np.int32)
+                    pts = np.array(scaled_points, dtype=np.int32)
                     cv2.fillPoly(mask, [pts], 255)
 
                     # Calcular temperatura média na ROI
@@ -920,9 +939,9 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                     if len(roi_region) > 0:
                         avg_temp = np.mean(roi_region)
                         roi_temps[name] = avg_temp
-                        logger.info(f"  ROI '{name}': {avg_temp:.2f}°C ({len(roi_region)} pixels)")
+                        logger.info(f"  ✅ ROI '{name}': {avg_temp:.2f}°C ({len(roi_region)} pixels)")
                     else:
-                        logger.warning(f"  ROI '{name}' não capturou nenhum pixel - pode estar fora da imagem")
+                        logger.warning(f"  ❌ ROI '{name}' não capturou nenhum pixel - pode estar fora da imagem")
 
                 # Tentar identificar ROIs esquerda/direita automaticamente
                 left_temp = None
@@ -1041,6 +1060,16 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                     if rois:
                         thermal_data = image_data.get('thermal_data')
                         if thermal_data is not None:
+                            # Calcula fatores de escala para esta imagem
+                            visible_image = image_data.get('visible_image')
+                            if visible_image is not None:
+                                visible_h, visible_w = visible_image.shape[:2]
+                                thermal_h, thermal_w = thermal_data.shape[:2]
+                                scale_x = thermal_w / visible_w
+                                scale_y = thermal_h / visible_h
+                            else:
+                                scale_x = scale_y = 1.0
+
                             roi_temps = {}
                             for roi in rois:
                                 name = roi['name']
@@ -1050,10 +1079,13 @@ Desvio Padrão: {stats['std_temp']:.2f}°C
                                 if not points:
                                     continue
 
+                                # Escala as coordenadas para o tamanho dos dados térmicos
+                                scaled_points = [(int(x * scale_x), int(y * scale_y)) for x, y in points]
+
                                 # Criar máscara
                                 import cv2
                                 mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
-                                pts = np.array(points, dtype=np.int32)
+                                pts = np.array(scaled_points, dtype=np.int32)
                                 cv2.fillPoly(mask, [pts], 255)
 
                                 # Calcular temperatura média
@@ -1604,6 +1636,21 @@ Significado Clínico:
 
             logger.info(f"Dados térmicos disponíveis: shape={thermal_data.shape}, dtype={thermal_data.dtype}")
 
+            # Pega o tamanho da imagem visível usada para desenhar ROIs
+            visible_image = self.current_image_data.get('visible_image')
+            if visible_image is not None:
+                visible_h, visible_w = visible_image.shape[:2]
+                thermal_h, thermal_w = thermal_data.shape[:2]
+                logger.info(f"Imagem visível: {visible_w}x{visible_h}, Dados térmicos: {thermal_w}x{thermal_h}")
+
+                # Calcula fatores de escala
+                scale_x = thermal_w / visible_w
+                scale_y = thermal_h / visible_h
+                logger.info(f"Fatores de escala: x={scale_x:.4f}, y={scale_y:.4f}")
+            else:
+                scale_x = scale_y = 1.0
+                logger.warning("Imagem visível não disponível, usando escala 1:1")
+
             roi_temps_info = []
             import cv2
 
@@ -1617,18 +1664,22 @@ Significado Clínico:
 
                 logger.info(f"Processando ROI '{name}' com {len(points)} pontos")
 
+                # Escala as coordenadas para o tamanho dos dados térmicos
+                scaled_points = [(int(x * scale_x), int(y * scale_y)) for x, y in points]
+                logger.info(f"  Original: {points[0]}, Escalado: {scaled_points[0]}")
+
                 # Calcular temperatura da ROI
                 mask = np.zeros(thermal_data.shape[:2], dtype=np.uint8)
-                pts = np.array(points, dtype=np.int32)
+                pts = np.array(scaled_points, dtype=np.int32)
                 cv2.fillPoly(mask, [pts], 255)
 
                 roi_region = thermal_data[mask == 255]
                 if len(roi_region) > 0:
                     avg_temp = np.mean(roi_region)
                     roi_temps_info.append(f"• {name}: {avg_temp:.2f}°C")
-                    logger.info(f"  Temperatura calculada: {avg_temp:.2f}°C (pixels: {len(roi_region)})")
+                    logger.info(f"  ✅ Temperatura calculada: {avg_temp:.2f}°C (pixels: {len(roi_region)})")
                 else:
-                    logger.warning(f"  ROI '{name}' não capturou nenhum pixel")
+                    logger.warning(f"  ❌ ROI '{name}' não capturou nenhum pixel após escalonamento")
 
             # Mostra temperaturas calculadas
             if roi_temps_info:
