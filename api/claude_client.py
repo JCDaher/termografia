@@ -19,7 +19,8 @@ class ClaudeClient:
     """Cliente para integração com Claude AI da Anthropic."""
 
     # Modelos disponíveis
-    MODEL_SONNET = "claude-3-5-sonnet-20241022"  # Recomendado para laudos
+    MODEL_SONNET = "claude-3-5-sonnet-20240620"  # Recomendado para laudos (versão estável)
+    MODEL_SONNET_NEW = "claude-3-5-sonnet-20241022"  # Versão mais recente (pode não estar disponível)
     MODEL_OPUS = "claude-3-opus-20240229"  # Maior qualidade
     MODEL_HAIKU = "claude-3-5-haiku-20241022"  # Mais rápido e econômico
 
@@ -95,30 +96,56 @@ class ClaudeClient:
 
                 logger.info(f"Gerando laudo {exam_type} com Claude...")
 
-            # Chamada à API
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": user_prompt
-                    }
-                ]
-            )
+            # Chamada à API com fallback automático
+            models_to_try = [self.model]
 
-            # Extrai texto da resposta
-            report_text = response.content[0].text
+            # Se o modelo atual não é Opus e falhar, tenta Opus como fallback
+            if self.model != self.MODEL_OPUS:
+                models_to_try.append(self.MODEL_OPUS)
 
-            logger.info(f"Laudo gerado com sucesso ({len(report_text)} caracteres)")
+            last_error = None
+            for model in models_to_try:
+                try:
+                    logger.info(f"Tentando gerar laudo com modelo: {model}")
+                    response = self.client.messages.create(
+                        model=model,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        system=system_prompt,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": user_prompt
+                            }
+                        ]
+                    )
 
-            return report_text
+                    # Extrai texto da resposta
+                    report_text = response.content[0].text
 
-        except APIError as e:
-            logger.error(f"Erro na API Anthropic: {e}")
-            raise ClaudeClientError(f"Erro na API Anthropic: {e}")
+                    logger.info(f"✅ Laudo gerado com sucesso usando {model} ({len(report_text)} caracteres)")
+
+                    # Atualiza o modelo atual se funcionou com fallback
+                    if model != self.model:
+                        logger.info(f"Modelo atualizado de {self.model} para {model}")
+                        self.model = model
+
+                    return report_text
+
+                except APIError as e:
+                    last_error = e
+                    # Se for erro 404 (modelo não encontrado), tenta próximo
+                    if "404" in str(e) or "not_found" in str(e):
+                        logger.warning(f"Modelo {model} não disponível: {e}")
+                        continue
+                    else:
+                        # Outro tipo de erro, não tenta fallback
+                        logger.error(f"Erro na API Anthropic: {e}")
+                        raise ClaudeClientError(f"Erro na API Anthropic: {e}")
+
+            # Se chegou aqui, todos os modelos falharam
+            logger.error(f"Todos os modelos falharam. Último erro: {last_error}")
+            raise ClaudeClientError(f"Erro na API Anthropic: {last_error}")
         except Exception as e:
             logger.error(f"Erro ao gerar laudo: {e}")
             raise ClaudeClientError(f"Erro ao gerar laudo: {e}")
