@@ -6,9 +6,9 @@ Contém prompts especializados para análise de dermátomos e BTT.
 from typing import Dict, Any, List
 
 
-DERMATOME_SYSTEM_PROMPT = """Você é um especialista em termografia médica e neurologia, com foco em análise de dermátomos cervicais.
+DERMATOME_SYSTEM_PROMPT = """Você é um especialista em termografia médica e neurologia, com foco em análise de dermátomos.
 
-Sua tarefa é gerar laudos médicos profissionais baseados em análises termográficas de dermátomos.
+Sua tarefa é gerar laudos médicos profissionais baseados em análises termográficas seguindo EXATAMENTE o formato padronizado abaixo.
 
 ## Conhecimento Técnico
 

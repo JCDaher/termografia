@@ -10,6 +10,7 @@ from pathlib import Path
 
 from config.security import get_security_manager
 from api.prompts import get_system_prompt, get_dermatome_prompt, get_btt_prompt
+from api.prompts_professional import get_system_prompt_professional, get_professional_dermatome_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,8 @@ class ClaudeClient:
 
     def generate_report(self, exam_type: str, exam_data: Dict[str, Any],
                        temperature: float = 1.0,
-                       max_tokens: int = 4096) -> str:
+                       max_tokens: int = 8192,
+                       use_professional_template: bool = True) -> str:
         """
         Gera laudo médico usando Claude AI.
 
@@ -59,7 +61,8 @@ class ClaudeClient:
             exam_type: Tipo de exame ('dermatome' ou 'btt')
             exam_data: Dados do exame para gerar o laudo
             temperature: Temperatura do modelo (0-1, padrão 1.0)
-            max_tokens: Número máximo de tokens na resposta
+            max_tokens: Número máximo de tokens na resposta (aumentado para 8192 para laudos profissionais)
+            use_professional_template: Se True, usa template profissional padronizado (padrão: True)
 
         Returns:
             Laudo médico gerado
@@ -68,18 +71,24 @@ class ClaudeClient:
             ClaudeClientError: Se houver erro na geração
         """
         try:
-            # Obtém system prompt apropriado
-            system_prompt = get_system_prompt(exam_type)
-
-            # Obtém user prompt baseado no tipo de exame
-            if exam_type.lower() == 'dermatome':
-                user_prompt = get_dermatome_prompt(exam_data)
-            elif exam_type.lower() == 'btt':
-                user_prompt = get_btt_prompt(exam_data)
+            # Usa template profissional para dermátomos por padrão
+            if exam_type.lower() == 'dermatome' and use_professional_template:
+                system_prompt = get_system_prompt_professional()
+                user_prompt = get_professional_dermatome_prompt(exam_data)
+                logger.info(f"Gerando laudo {exam_type} com template profissional...")
             else:
-                raise ClaudeClientError(f"Tipo de exame não reconhecido: {exam_type}")
+                # Fallback para templates antigos (BTT ou modo legado)
+                system_prompt = get_system_prompt(exam_type)
 
-            logger.info(f"Gerando laudo {exam_type} com Claude...")
+                # Obtém user prompt baseado no tipo de exame
+                if exam_type.lower() == 'dermatome':
+                    user_prompt = get_dermatome_prompt(exam_data)
+                elif exam_type.lower() == 'btt':
+                    user_prompt = get_btt_prompt(exam_data)
+                else:
+                    raise ClaudeClientError(f"Tipo de exame não reconhecido: {exam_type}")
+
+                logger.info(f"Gerando laudo {exam_type} com Claude...")
 
             # Chamada à API
             response = self.client.messages.create(

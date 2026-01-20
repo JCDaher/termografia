@@ -1184,24 +1184,30 @@ Significado Clínico:
         # Prepara dados do exame
         exam_data = {
             'patient_name': self.input_patient_name.text(),
-            'exam_date': datetime.now().strftime('%Y-%m-%d %H:%M'),
+            'exam_date': datetime.now().strftime('%d/%m/%Y %H:%M'),
             'clinical_indication': self.input_clinical_indication.toPlainText(),
             'equipment': 'Câmera termográfica FLIR',
             'dermatome_analyses': []
         }
 
-        # Adiciona análise se disponível
-        if self.input_left_temp.text() and self.input_right_temp.text():
-            exam_data['dermatome_analyses'].append({
-                'dermatome': self.combo_dermatome.currentText(),
-                'left_temp': float(self.input_left_temp.text()),
-                'right_temp': float(self.input_right_temp.text()),
-                'delta_t': abs(float(self.input_left_temp.text()) - float(self.input_right_temp.text())),
-                'classification': self.thermal_analyzer.analyze_asymmetry(
-                    float(self.input_left_temp.text()),
-                    float(self.input_right_temp.text())
-                ).classification
-            })
+        # Verifica se há resultados de processamento em lote
+        if self.batch_results and len(self.batch_results) > 0:
+            # Processamento em lote - passa todos os resultados
+            exam_data['batch_results'] = self.batch_results
+            logger.info(f"Gerando laudo profissional com {len(self.batch_results)} imagens processadas em lote")
+        else:
+            # Processamento individual - adiciona análise se disponível
+            if self.input_left_temp.text() and self.input_right_temp.text():
+                exam_data['dermatome_analyses'].append({
+                    'dermatome': self.combo_dermatome.currentText(),
+                    'left_temp': float(self.input_left_temp.text()),
+                    'right_temp': float(self.input_right_temp.text()),
+                    'delta_t': abs(float(self.input_left_temp.text()) - float(self.input_right_temp.text())),
+                    'classification': self.thermal_analyzer.analyze_asymmetry(
+                        float(self.input_left_temp.text()),
+                        float(self.input_right_temp.text())
+                    ).classification
+                })
 
         # Mostra progresso
         self.progress_bar.setVisible(True)
@@ -1213,7 +1219,10 @@ Significado Clínico:
         self.report_thread.error.connect(self.on_report_error)
         self.report_thread.start()
 
-        self.statusBar().showMessage("Gerando laudo com Claude AI...")
+        status_msg = "Gerando laudo profissional com Claude AI..."
+        if self.batch_results:
+            status_msg += f" ({len(self.batch_results)} imagens)"
+        self.statusBar().showMessage(status_msg)
 
     def on_report_generated(self, report: str):
         """Callback quando laudo é gerado."""
