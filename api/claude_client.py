@@ -18,11 +18,14 @@ logger = logging.getLogger(__name__)
 class ClaudeClient:
     """Cliente para integração com Claude AI da Anthropic."""
 
-    # Modelos disponíveis
-    MODEL_SONNET = "claude-3-5-sonnet-20240620"  # Recomendado para laudos (versão estável)
-    MODEL_SONNET_NEW = "claude-3-5-sonnet-20241022"  # Versão mais recente (pode não estar disponível)
-    MODEL_OPUS = "claude-3-opus-20240229"  # Maior qualidade
+    # Modelos disponíveis (ordenados por preferência)
+    MODEL_OPUS_4 = "claude-opus-4-20250514"  # Mais recente (pode não estar disponível)
+    MODEL_SONNET_3_5 = "claude-3-5-sonnet-20241022"  # Sonnet 3.5 mais recente
+    MODEL_SONNET_3_5_OLD = "claude-3-5-sonnet-20240620"  # Versão estável
     MODEL_HAIKU = "claude-3-5-haiku-20241022"  # Mais rápido e econômico
+
+    # Modelo padrão
+    MODEL_SONNET = MODEL_SONNET_3_5_OLD
 
     def __init__(self, api_key: Optional[str] = None, model: str = MODEL_SONNET):
         """
@@ -96,12 +99,20 @@ class ClaudeClient:
 
                 logger.info(f"Gerando laudo {exam_type} com Claude...")
 
-            # Chamada à API com fallback automático
-            models_to_try = [self.model]
+            # Chamada à API com fallback automático para múltiplos modelos
+            # Tenta em ordem de preferência até encontrar um que funcione
+            models_to_try = [
+                self.model,  # Modelo configurado (geralmente Sonnet 3.5 old)
+                self.MODEL_SONNET_3_5,  # Sonnet 3.5 mais recente
+                self.MODEL_HAIKU,  # Haiku (mais econômico)
+                self.MODEL_OPUS_4,  # Opus 4 (se disponível)
+            ]
 
-            # Se o modelo atual não é Opus e falhar, tenta Opus como fallback
-            if self.model != self.MODEL_OPUS:
-                models_to_try.append(self.MODEL_OPUS)
+            # Remove duplicatas mantendo ordem
+            seen = set()
+            models_to_try = [m for m in models_to_try if not (m in seen or seen.add(m))]
+
+            logger.info(f"Modelos a tentar (em ordem): {models_to_try}")
 
             last_error = None
             for model in models_to_try:
@@ -134,18 +145,33 @@ class ClaudeClient:
 
                 except APIError as e:
                     last_error = e
+                    error_str = str(e)
                     # Se for erro 404 (modelo não encontrado), tenta próximo
-                    if "404" in str(e) or "not_found" in str(e):
-                        logger.warning(f"Modelo {model} não disponível: {e}")
+                    if "404" in error_str or "not_found" in error_str:
+                        logger.warning(f"❌ Modelo {model} não disponível (404), tentando próximo...")
+                        continue
+                    # Se for erro de permissão, tenta próximo
+                    elif "permission" in error_str.lower() or "access" in error_str.lower():
+                        logger.warning(f"❌ Sem permissão para modelo {model}, tentando próximo...")
                         continue
                     else:
-                        # Outro tipo de erro, não tenta fallback
-                        logger.error(f"Erro na API Anthropic: {e}")
+                        # Outro tipo de erro (ex: rate limit, auth), não tenta fallback
+                        logger.error(f"Erro crítico na API Anthropic: {e}")
                         raise ClaudeClientError(f"Erro na API Anthropic: {e}")
 
             # Se chegou aqui, todos os modelos falharam
-            logger.error(f"Todos os modelos falharam. Último erro: {last_error}")
-            raise ClaudeClientError(f"Erro na API Anthropic: {last_error}")
+            logger.error(f"❌ Todos os modelos falharam!")
+            logger.error(f"Modelos tentados: {models_to_try}")
+            logger.error(f"Último erro: {last_error}")
+            raise ClaudeClientError(
+                f"Nenhum modelo disponível funcionou.\n\n"
+                f"Modelos tentados: {', '.join(models_to_try)}\n\n"
+                f"Último erro: {last_error}\n\n"
+                f"Verifique:\n"
+                f"• Sua API key tem saldo/créditos\n"
+                f"• Sua conta tem acesso aos modelos Claude\n"
+                f"• Conexão com internet está funcionando"
+            )
         except Exception as e:
             logger.error(f"Erro ao gerar laudo: {e}")
             raise ClaudeClientError(f"Erro ao gerar laudo: {e}")
