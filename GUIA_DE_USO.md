@@ -1,5 +1,26 @@
 # 📘 Guia de Uso - Sistema de Termografia Médica
 
+## 🔥 IMPORTANTE: Instalar Suporte a Dados Térmicos FLIR
+
+**ANTES DE USAR O SISTEMA**, instale o suporte para extração de dados térmicos reais:
+
+```bash
+./install_flir_support.sh
+```
+
+Isso instala a biblioteca `flirimageextractor` que extrai temperaturas REAIS das imagens FLIR.
+
+**Por que isso é necessário?**
+- ✅ Extrai dados térmicos REAIS embutidos nas imagens FLIR
+- ✅ Temperaturas PRECISAS em °C
+- ✅ Análise termográfica CONFIÁVEL
+
+Sem isso, o sistema usará apenas aproximações baseadas na imagem visível!
+
+📖 Leia: `CORRECAO_DADOS_TERMICOS.md` para mais detalhes
+
+---
+
 ## 🚀 Início Rápido
 
 ### 1. Configurar API Key da Anthropic

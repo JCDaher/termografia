@@ -13,6 +13,14 @@ from PIL.ExifTags import TAGS
 import json
 import struct
 
+try:
+    from flirimageextractor import FlirImageExtractor
+    FLIR_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    FLIR_EXTRACTOR_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("flirimageextractor não disponível - instale com 'pip install flirimageextractor'")
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,7 +116,7 @@ class FLIRProcessor:
 
     def _extract_thermal_data(self, image_path: Path) -> Optional[np.ndarray]:
         """
-        Tenta extrair dados térmicos brutos da imagem FLIR.
+        Extrai dados térmicos reais da imagem FLIR usando flirimageextractor.
 
         Args:
             image_path: Caminho para a imagem
@@ -116,41 +124,37 @@ class FLIRProcessor:
         Returns:
             Array numpy com temperaturas em °C ou None se não encontrado
         """
-        try:
-            # Tenta extrair dados térmicos embarcados
-            # Nota: FLIR incorpora dados térmicos em APP1 marker do JPEG
-            with open(image_path, 'rb') as f:
-                data = f.read()
-
-            # Procura por markers FLIR
-            flir_marker = b'FLIR\x00'
-            marker_pos = data.find(flir_marker)
-
-            if marker_pos != -1:
-                logger.info("Marcador FLIR encontrado, tentando extrair dados térmicos")
-                # Extração simplificada - em produção, usar biblioteca específica como flirpy
-                return self._parse_flir_thermal_data(data[marker_pos:])
-
+        if not FLIR_EXTRACTOR_AVAILABLE:
+            logger.warning("flirimageextractor não está instalada - não é possível extrair dados térmicos reais")
             return None
+
+        try:
+            logger.info(f"Extraindo dados térmicos FLIR de: {image_path.name}")
+
+            # Cria extrator FLIR
+            flir = FlirImageExtractor()
+
+            # Processa a imagem
+            flir.process_image(str(image_path))
+
+            # Extrai dados térmicos em Celsius
+            thermal_np = flir.get_thermal_np()
+
+            if thermal_np is not None:
+                logger.info(f"✅ Dados térmicos extraídos com sucesso!")
+                logger.info(f"   Shape: {thermal_np.shape}, dtype: {thermal_np.dtype}")
+                logger.info(f"   Temperatura min: {np.min(thermal_np):.2f}°C")
+                logger.info(f"   Temperatura max: {np.max(thermal_np):.2f}°C")
+                logger.info(f"   Temperatura média: {np.mean(thermal_np):.2f}°C")
+
+                return thermal_np.astype(np.float32)
+            else:
+                logger.warning("flirimageextractor não conseguiu extrair dados térmicos (retornou None)")
+                return None
 
         except Exception as e:
-            logger.warning(f"Erro ao extrair dados térmicos: {e}")
+            logger.error(f"Erro ao extrair dados térmicos com flirimageextractor: {e}", exc_info=True)
             return None
-
-    def _parse_flir_thermal_data(self, flir_data: bytes) -> Optional[np.ndarray]:
-        """
-        Parse dos dados térmicos FLIR.
-
-        Args:
-            flir_data: Bytes com dados FLIR
-
-        Returns:
-            Array numpy com temperaturas ou None
-        """
-        # Implementação simplificada
-        # Em produção, usar biblioteca como flirpy ou exiftool
-        logger.warning("Parser de dados térmicos FLIR não implementado completamente")
-        return None
 
     def _estimate_thermal_from_visible(self, img: np.ndarray) -> np.ndarray:
         """
