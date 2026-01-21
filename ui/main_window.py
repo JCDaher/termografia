@@ -30,6 +30,15 @@ from ui.patient_history import PatientHistoryDialog
 from ui.report_editor import ReportEditorDialog
 from ui.themes import get_theme_manager, ThemeManager
 
+# Import FLIR modules (with error handling)
+try:
+    from core.flir_html_parser import parse_flir_html
+    from core.flir_validator import FLIRValidator
+    FLIR_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"FLIR modules not available: {e}")
+    FLIR_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -2088,6 +2097,18 @@ Significado Clínico:
 
     def import_flir_html(self):
         """Importa arquivo HTML do FLIR Thermal Studio com medições de referência."""
+        # Verifica se módulos FLIR estão disponíveis
+        if not FLIR_AVAILABLE:
+            QMessageBox.critical(
+                self,
+                "FLIR não disponível",
+                "Os módulos FLIR não estão disponíveis.\n\n"
+                "Certifique-se de que beautifulsoup4 está instalado:\n"
+                "  pip install beautifulsoup4\n\n"
+                "Depois reinicie a aplicação."
+            )
+            return
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Selecionar Export HTML do FLIR Thermal Studio",
@@ -2099,8 +2120,6 @@ Significado Clínico:
             return
 
         try:
-            from core.flir_html_parser import parse_flir_html
-
             # Parse HTML
             self.flir_html_path = Path(file_path)
             self.flir_data = parse_flir_html(self.flir_html_path)
@@ -2143,13 +2162,19 @@ Significado Clínico:
             logger.info(f"  {total_images} imagens, {total_measurements} medições")
 
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
             logger.error(f"Erro ao importar FLIR HTML: {e}", exc_info=True)
-            QMessageBox.critical(
-                self,
-                "Erro ao Importar FLIR HTML",
-                f"Erro ao processar arquivo HTML do FLIR:\n\n{str(e)}\n\n"
-                f"Verifique se o arquivo é um export válido do FLIR Thermal Studio."
-            )
+
+            # Mostra erro detalhado
+            error_msg = QMessageBox(self)
+            error_msg.setIcon(QMessageBox.Icon.Critical)
+            error_msg.setWindowTitle("Erro ao Importar FLIR HTML")
+            error_msg.setText(f"Erro ao processar arquivo HTML do FLIR:\n\n{str(e)}")
+            error_msg.setDetailedText(error_details)
+            error_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            error_msg.exec()
+
             self.flir_html_path = None
             self.flir_data = None
             self.update_flir_status()
@@ -2164,12 +2189,10 @@ Significado Clínico:
         Returns:
             ValidationReport ou None se FLIR não disponível
         """
-        if self.flir_data is None:
+        if self.flir_data is None or not FLIR_AVAILABLE:
             return None
 
         try:
-            from core.flir_validator import FLIRValidator
-
             validator = FLIRValidator(
                 tolerance_ok=0.5,
                 tolerance_warning=1.0
@@ -2248,6 +2271,14 @@ Significado Clínico:
 
     def show_flir_validation_details(self):
         """Mostra detalhes completos da validação FLIR."""
+        if not FLIR_AVAILABLE:
+            QMessageBox.warning(
+                self,
+                "FLIR não disponível",
+                "Módulos FLIR não estão disponíveis."
+            )
+            return
+
         if self.flir_validation_report is None:
             QMessageBox.information(
                 self,
@@ -2258,8 +2289,6 @@ Significado Clínico:
             return
 
         try:
-            from core.flir_validator import FLIRValidator
-
             validator = FLIRValidator()
             report_text = validator.generate_text_report(self.flir_validation_report)
 
