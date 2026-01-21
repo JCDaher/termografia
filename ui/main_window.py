@@ -77,6 +77,11 @@ class MainWindow(QMainWindow):
         self.generated_report_text = ""  # Último laudo gerado
         self.batch_results = []  # Resultados do processamento em lote
 
+        # Estado FLIR HTML import
+        self.flir_html_path = None  # Caminho para HTML FLIR importado
+        self.flir_data = None  # Dados parseados do FLIR
+        self.flir_validation_report = None  # Último relatório de validação
+
         self.init_ui()
         self.setup_menu()
         self.setup_shortcuts()
@@ -120,6 +125,12 @@ class MainWindow(QMainWindow):
         self.btn_import.clicked.connect(self.import_flir_image)
         toolbar.addWidget(self.btn_import)
 
+        # Botão importar FLIR HTML
+        self.btn_import_flir_html = QPushButton("📥 Importar FLIR HTML")
+        self.btn_import_flir_html.clicked.connect(self.import_flir_html)
+        self.btn_import_flir_html.setToolTip("Importa medições de referência do FLIR Thermal Studio")
+        toolbar.addWidget(self.btn_import_flir_html)
+
         # Botão processar
         self.btn_process = QPushButton("⚙️ Processar Atual")
         self.btn_process.clicked.connect(self.process_image)
@@ -146,6 +157,11 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_generate_report)
 
         toolbar.addStretch()
+
+        # Indicador de validação FLIR
+        self.lbl_flir_status = QLabel("FLIR: ✗")
+        self.lbl_flir_status.setToolTip("Status de validação FLIR")
+        toolbar.addWidget(self.lbl_flir_status)
 
         # Indicador de API key
         self.lbl_api_status = QLabel("API: ✗")
@@ -1475,11 +1491,63 @@ Significado Clínico:
             'dermatome_analyses': []
         }
 
+        # Adiciona dados FLIR se disponível
+        if self.flir_data is not None:
+            exam_data['flir_reference_data'] = {
+                'source_file': str(self.flir_html_path.name) if self.flir_html_path else 'unknown',
+                'total_measurements': len(self.flir_data.get_all_measurements()),
+                'images': []
+            }
+
+            for image in self.flir_data.images:
+                image_data = {
+                    'filename': image.filename,
+                    'measurements': []
+                }
+                for m in image.measurements:
+                    image_data['measurements'].append({
+                        'roi_name': m.roi_name,
+                        'mean_temp': m.mean_temp,
+                        'max_temp': m.max_temp,
+                        'min_temp': m.min_temp
+                    })
+                exam_data['flir_reference_data']['images'].append(image_data)
+
+            # Adiciona relatório de validação se disponível
+            if self.flir_validation_report is not None:
+                exam_data['flir_validation'] = {
+                    'accuracy': self.flir_validation_report.get_accuracy_percentage(),
+                    'matched_rois': self.flir_validation_report.matched_rois,
+                    'total_rois': self.flir_validation_report.total_rois,
+                    'status_counts': self.flir_validation_report.get_status_counts(),
+                    'statistics': self.flir_validation_report.statistics
+                }
+
+                logger.info(
+                    f"Adicionando dados FLIR ao laudo: "
+                    f"{self.flir_validation_report.matched_rois} ROIs validadas, "
+                    f"precisão {self.flir_validation_report.get_accuracy_percentage():.1f}%"
+                )
+
         # Verifica se há resultados de processamento em lote
         if self.batch_results and len(self.batch_results) > 0:
             # Processamento em lote - passa todos os resultados
             exam_data['batch_results'] = self.batch_results
             logger.info(f"Gerando laudo profissional com {len(self.batch_results)} imagens processadas em lote")
+
+            # Se tem FLIR importado, valida batch results
+            if self.flir_data is not None:
+                # Coleta todas as temperaturas do batch
+                all_temps = {}
+                for result in self.batch_results:
+                    if 'left_roi_name' in result and 'left_temp' in result:
+                        all_temps[result.get('left_roi_name', 'Left')] = result['left_temp']
+                    if 'right_roi_name' in result and 'right_temp' in result:
+                        all_temps[result.get('right_roi_name', 'Right')] = result['right_temp']
+
+                # Valida contra FLIR
+                if all_temps:
+                    self.validate_with_flir(all_temps)
         else:
             # Processamento individual - adiciona análise se disponível
             if self.input_left_temp.text() and self.input_right_temp.text():
@@ -1493,6 +1561,14 @@ Significado Clínico:
                         float(self.input_right_temp.text())
                     ).classification
                 })
+
+                # Se tem FLIR, valida
+                if self.flir_data is not None:
+                    temps = {
+                        'Left': float(self.input_left_temp.text()),
+                        'Right': float(self.input_right_temp.text())
+                    }
+                    self.validate_with_flir(temps)
 
         # Mostra progresso
         self.progress_bar.setVisible(True)
@@ -1720,6 +1796,25 @@ Significado Clínico:
         action_import.setShortcut("Ctrl+I")
         action_import.triggered.connect(self.import_flir_image)
         tools_menu.addAction(action_import)
+
+        # Menu FLIR
+        flir_menu = menubar.addMenu("FLIR")
+
+        action_import_flir_html = QAction("Importar FLIR HTML...", self)
+        action_import_flir_html.setShortcut("Ctrl+F")
+        action_import_flir_html.triggered.connect(self.import_flir_html)
+        flir_menu.addAction(action_import_flir_html)
+
+        action_show_validation = QAction("Ver Relatório de Validação", self)
+        action_show_validation.setShortcut("Ctrl+Shift+V")
+        action_show_validation.triggered.connect(self.show_flir_validation_details)
+        flir_menu.addAction(action_show_validation)
+
+        flir_menu.addSeparator()
+
+        action_clear_flir = QAction("Limpar Dados FLIR", self)
+        action_clear_flir.triggered.connect(self.clear_flir_data)
+        flir_menu.addAction(action_clear_flir)
 
         # Menu Temas
         theme_menu = menubar.addMenu("Temas")
@@ -1991,6 +2086,242 @@ Significado Clínico:
                 f"Erro ao processar ROIs salvas:\n\n{str(e)}\n\n"
                 f"Verifique os logs para mais detalhes.")
 
+    def import_flir_html(self):
+        """Importa arquivo HTML do FLIR Thermal Studio com medições de referência."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Selecionar Export HTML do FLIR Thermal Studio",
+            "",
+            "HTML Files (*.html *.htm)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            from core.flir_html_parser import parse_flir_html
+
+            # Parse HTML
+            self.flir_html_path = Path(file_path)
+            self.flir_data = parse_flir_html(self.flir_html_path)
+
+            total_measurements = len(self.flir_data.get_all_measurements())
+            total_images = len(self.flir_data.images)
+
+            # Atualiza status
+            self.update_flir_status()
+
+            # Mostra informações
+            info_text = (
+                f"✅ FLIR HTML importado com sucesso!\n\n"
+                f"📊 Total de imagens: {total_images}\n"
+                f"🌡️  Total de medições: {total_measurements}\n\n"
+                f"Detalhes:\n"
+            )
+
+            for image in self.flir_data.images:
+                info_text += f"\n📷 {image.filename}:\n"
+                for m in image.measurements[:5]:  # Mostra primeiras 5
+                    info_text += f"   • {m.roi_name}: {m.mean_temp:.2f}°C\n"
+                if len(image.measurements) > 5:
+                    info_text += f"   ... e mais {len(image.measurements) - 5} ROIs\n"
+
+            info_text += (
+                f"\n💡 Esses dados serão usados para:\n"
+                f"   • Validar precisão das medições do sistema\n"
+                f"   • Enriquecer os laudos gerados pelo Claude AI\n"
+                f"   • Fornecer referência profissional FLIR"
+            )
+
+            QMessageBox.information(
+                self,
+                "FLIR HTML Importado",
+                info_text
+            )
+
+            logger.info(f"FLIR HTML importado: {file_path}")
+            logger.info(f"  {total_images} imagens, {total_measurements} medições")
+
+        except Exception as e:
+            logger.error(f"Erro ao importar FLIR HTML: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Erro ao Importar FLIR HTML",
+                f"Erro ao processar arquivo HTML do FLIR:\n\n{str(e)}\n\n"
+                f"Verifique se o arquivo é um export válido do FLIR Thermal Studio."
+            )
+            self.flir_html_path = None
+            self.flir_data = None
+            self.update_flir_status()
+
+    def validate_with_flir(self, system_temperatures: Dict[str, float]) -> Optional[Any]:
+        """
+        Valida temperaturas do sistema contra dados FLIR.
+
+        Args:
+            system_temperatures: Dicionário {roi_name: temperatura}
+
+        Returns:
+            ValidationReport ou None se FLIR não disponível
+        """
+        if self.flir_data is None:
+            return None
+
+        try:
+            from core.flir_validator import FLIRValidator
+
+            validator = FLIRValidator(
+                tolerance_ok=0.5,
+                tolerance_warning=1.0
+            )
+
+            validation_report = validator.validate(
+                self.flir_data,
+                system_temperatures,
+                fuzzy_match=True
+            )
+
+            self.flir_validation_report = validation_report
+            self.update_flir_status()
+
+            logger.info(f"Validação FLIR: {validation_report}")
+
+            return validation_report
+
+        except Exception as e:
+            logger.error(f"Erro na validação FLIR: {e}", exc_info=True)
+            return None
+
+    def update_flir_status(self):
+        """Atualiza label de status FLIR."""
+        if self.flir_data is None:
+            self.lbl_flir_status.setText("FLIR: ✗")
+            self.lbl_flir_status.setStyleSheet("color: gray;")
+            self.lbl_flir_status.setToolTip("Nenhum arquivo FLIR HTML importado")
+        elif self.flir_validation_report is None:
+            # FLIR importado mas ainda não validado
+            total_measurements = len(self.flir_data.get_all_measurements())
+            self.lbl_flir_status.setText(f"FLIR: ✓ ({total_measurements})")
+            self.lbl_flir_status.setStyleSheet("color: blue;")
+            self.lbl_flir_status.setToolTip(
+                f"FLIR importado: {total_measurements} medições\n"
+                f"Aguardando processamento para validação"
+            )
+        else:
+            # FLIR importado e validado
+            accuracy = self.flir_validation_report.get_accuracy_percentage()
+            matched = self.flir_validation_report.matched_rois
+            total = self.flir_validation_report.total_rois
+
+            if accuracy >= 90:
+                color = "green"
+                symbol = "✓✓"
+            elif accuracy >= 70:
+                color = "orange"
+                symbol = "✓"
+            else:
+                color = "red"
+                symbol = "⚠"
+
+            self.lbl_flir_status.setText(f"FLIR: {symbol} {accuracy:.0f}%")
+            self.lbl_flir_status.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+            status_counts = self.flir_validation_report.get_status_counts()
+            tooltip = (
+                f"Validação FLIR:\n"
+                f"Precisão: {accuracy:.1f}%\n"
+                f"ROIs: {matched}/{total}\n"
+                f"✅ OK: {status_counts['ok']}\n"
+                f"⚠️ Warning: {status_counts['warning']}\n"
+                f"❌ Error: {status_counts['error']}\n"
+            )
+
+            if self.flir_validation_report.statistics:
+                stats = self.flir_validation_report.statistics
+                tooltip += (
+                    f"\nEstatísticas:\n"
+                    f"Diff média: {stats['mean_abs_difference']:.2f}°C\n"
+                    f"Diff máxima: {stats['max_abs_difference']:.2f}°C"
+                )
+
+            self.lbl_flir_status.setToolTip(tooltip)
+
+    def show_flir_validation_details(self):
+        """Mostra detalhes completos da validação FLIR."""
+        if self.flir_validation_report is None:
+            QMessageBox.information(
+                self,
+                "Validação FLIR",
+                "Nenhuma validação disponível.\n\n"
+                "Importe um arquivo FLIR HTML e processe uma imagem para ver a validação."
+            )
+            return
+
+        try:
+            from core.flir_validator import FLIRValidator
+
+            validator = FLIRValidator()
+            report_text = validator.generate_text_report(self.flir_validation_report)
+
+            # Cria dialog para exibir relatório
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Relatório de Validação FLIR")
+            dialog.setIcon(QMessageBox.Icon.Information)
+            dialog.setText("Relatório completo de validação FLIR vs Sistema:")
+            dialog.setDetailedText(report_text)
+            dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+
+            # Expande o texto detalhado automaticamente
+            for button in dialog.buttons():
+                if dialog.buttonRole(button) == QMessageBox.ButtonRole.ActionRole:
+                    button.click()
+                    break
+
+            dialog.exec()
+
+        except Exception as e:
+            logger.error(f"Erro ao exibir validação FLIR: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Erro",
+                f"Erro ao exibir relatório de validação:\n\n{str(e)}"
+            )
+
+    def clear_flir_data(self):
+        """Limpa dados FLIR importados."""
+        if self.flir_data is None:
+            QMessageBox.information(
+                self,
+                "Limpar FLIR",
+                "Nenhum dado FLIR importado para limpar."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Limpar Dados FLIR",
+            "Deseja realmente limpar os dados FLIR importados?\n\n"
+            "Isso removerá:\n"
+            "• Medições de referência FLIR\n"
+            "• Relatório de validação\n\n"
+            "Esta ação não pode ser desfeita.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.flir_html_path = None
+            self.flir_data = None
+            self.flir_validation_report = None
+            self.update_flir_status()
+
+            QMessageBox.information(
+                self,
+                "FLIR Limpo",
+                "✅ Dados FLIR removidos com sucesso."
+            )
+
+            logger.info("Dados FLIR limpos pelo usuário")
+
     def show_about(self):
         """Mostra dialog sobre o aplicativo."""
         about_text = """
@@ -2010,6 +2341,7 @@ Significado Clínico:
             <li>Exportação profissional em PDF</li>
             <li>Histórico completo de pacientes</li>
             <li>Temas personalizáveis</li>
+            <li>Importação e validação FLIR HTML</li>
         </ul>
         <p><i>Powered by Anthropic Claude AI</i></p>
         """
