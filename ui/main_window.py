@@ -30,6 +30,8 @@ from ui.patient_history import PatientHistoryDialog
 from ui.report_editor import ReportEditorDialog
 from ui.themes import get_theme_manager, ThemeManager
 
+logger = logging.getLogger(__name__)
+
 # Import FLIR modules (with error handling)
 try:
     from core.flir_html_parser import parse_flir_html
@@ -38,8 +40,6 @@ try:
 except ImportError as e:
     logger.warning(f"FLIR modules not available: {e}")
     FLIR_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 
 class ReportGenerationThread(QThread):
